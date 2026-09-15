@@ -7,7 +7,7 @@ from unittest.mock import patch
 from gold_analyst.agent import investigate, safe_error
 from gold_analyst.demo import demonstrate
 from gold_analyst.server import new_run
-from gold_analyst.tools import parse_html, validate_public_url
+from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
 from gold_analyst.verification import calculate_change, validate_report
 
 
@@ -84,7 +84,7 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(len(page["tables"][0]), 3)
         self.assertNotIn("final_price", page)
 
-    @patch("gold_analyst.tools.socket.getaddrinfo", return_value=[(None, None, None, None, ("127.0.0.1", 80))])
+    @patch("gold_analyst.tools.web.socket.getaddrinfo", return_value=[(None, None, None, None, ("127.0.0.1", 80))])
     def test_private_targets_blocked(self, _):
         with self.assertRaises(ValueError):
             validate_public_url("http://example.com/")
@@ -126,6 +126,30 @@ class AgentTests(unittest.TestCase):
         client = FakeClient([response()] * 6 + [response(call("submit_report", report([]))), response(call("submit_report", report([])))])
         investigate(new_run("live", "未知", "counter_first"), lambda *a: None, client)
         self.assertEqual(client.requests[6]["tool_choice"], {"type": "function", "name": "submit_report"})
+
+
+class ToolRegistryTests(unittest.TestCase):
+    def test_registry_binds_all_tools(self):
+        registry = create_tool_registry(new_run("demo", "", "source_first"), lambda *a: None)
+        self.assertEqual(
+            registry.names,
+            {"read_url", "list_news", "get_sge_data", "calculate_change", "search_web", "submit_report"},
+        )
+        self.assertTrue(registry.get("submit_report").terminal)
+        self.assertEqual(len(registry.schemas()), 6)
+
+    def test_duplicate_tool_names_rejected(self):
+        class ExampleTool(Tool):
+            name = "same"
+            description = "测试"
+            parameters = {}
+
+            def execute(self):
+                return {}
+
+        context = ToolContext(new_run("demo", "", "source_first"), lambda *a: None)
+        with self.assertRaises(ValueError):
+            ToolRegistry([ExampleTool(context), ExampleTool(context)])
 
 
 if __name__ == "__main__":

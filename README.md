@@ -120,17 +120,26 @@ GOLD_MODEL=gpt-4.1-mini
 
 1. `main.py`：入口，选择网页 / 演示 / 联网。
 2. `gold_analyst/demo.py`：最容易读，理解一条核验记录的结构。
-3. `gold_analyst/verification.py`：确定性算术与引用检查。
-4. `gold_analyst/tools.py`：每个工具都是一个 Python 方法。
-5. `gold_analyst/agent.py`：核心循环，理解 tool call 怎么接回模型。
-6. `gold_analyst/prompts.py`：调查员、审核员及三个策略的提示词。
+3. `gold_analyst/tools/base.py`：所有工具的共同接口和注册表。
+4. `gold_analyst/tools/__init__.py`：唯一的工具绑定入口。
+5. `gold_analyst/tools/` 里的其他文件：每个文件负责一种工具。
+6. `gold_analyst/agent.py`：核心循环，理解 tool call 怎么接回模型。
+7. `gold_analyst/prompts.py`：调查员、审核员及三个策略的提示词。
 
 ```text
 GoldAnalyst/
 ├── main.py                 运行入口
 ├── gold_analyst/
 │   ├── agent.py            OpenAI Responses 工具调用循环
-│   ├── tools.py            网页 / PDF / 搜索 / 上金所 / 计算
+│   ├── tools/              可扩展工具包
+│   │   ├── base.py         Tool 基类、共享上下文和注册表
+│   │   ├── __init__.py     集中实例化并绑定全部工具
+│   │   ├── web.py          网页 / PDF 读取
+│   │   ├── news.py         同花顺新闻列表
+│   │   ├── sge.py          上金所历史数据
+│   │   ├── calculator.py   确定性价格计算
+│   │   ├── search.py       OpenAI 联网搜索
+│   │   └── report.py       结构化报告提交
 │   ├── verification.py     计算与引用结构验证
 │   ├── prompts.py          研究策略和角色
 │   ├── demo.py             明确虚构的离线教学流程
@@ -145,6 +154,15 @@ GoldAnalyst/
 ```
 
 如果参考 CoreCoder，先只看它的 `agent.py` 和 `tools/base.py`：工具调用协议与循环逻辑。暂时不用学习权限、终端操作和上下文压缩等编码代理功能。
+
+### 这种 Tool 类和 `@tool` 有什么区别？
+
+底层没有本质区别：两者最终都要把工具名称、说明、参数 JSON Schema 交给模型，模型返回工具名和参数后，再由 Python 执行。
+
+- `@tool` 是装饰器写法，框架通常根据函数签名和 docstring 自动生成 schema。短小项目写得快，但行为取决于所用框架。
+- 本项目的 `Tool` 类显式保存 `name / description / parameters / execute()`，代码稍多，却容易加共享状态、预算、缓存、终止型工具和统一测试。
+
+新增工具的步骤是：新建一个继承 `Tool` 的类，然后只在 `tools/__init__.py` 中实例化并加入 `ToolRegistry`。Agent 本身不需要修改。
 
 ## 验证
 
