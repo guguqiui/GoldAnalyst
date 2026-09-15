@@ -11,6 +11,7 @@ from uuid import uuid4
 from .agent import investigate, safe_error
 from .config import ROOT, public_settings
 from .demo import demonstrate
+from .models import RunState
 from .prompts import STRATEGIES
 from .storage import now, save_run, markdown
 
@@ -19,7 +20,7 @@ LOCK = threading.Lock()
 POOL = ThreadPoolExecutor(max_workers=1)
 
 
-def new_run(mode, task, strategy):
+def new_run(mode: str, task: str, strategy: str) -> RunState:
     return {"id": uuid4().hex[:16], "mode": mode, "input": task, "strategy": strategy,
             "created_at": now(), "status": "running", "events": [], "evidence": [],
             "usage": {"input_tokens": 0, "output_tokens": 0, "tool_calls": 0, "search_requests": 0}}

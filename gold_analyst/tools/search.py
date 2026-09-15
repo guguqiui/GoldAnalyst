@@ -1,4 +1,8 @@
 """OpenAI 托管网页搜索工具。"""
+from typing import cast
+
+from openai import OpenAI
+
 from .base import Tool
 
 
@@ -17,7 +21,8 @@ class SearchWebTool(Tool):
         if self.search_count >= 3:
             raise ValueError("已达到本次 3 次搜索请求的预算，请利用现有资料完成或说明证据不足")
         self.search_count += 1
-        response = self.context.client.responses.create(
+        client = cast(OpenAI, self.context.client)
+        response = client.responses.create(
             model=self.context.model,
             store=False,
             max_output_tokens=1600,

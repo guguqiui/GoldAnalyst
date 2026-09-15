@@ -1,4 +1,7 @@
 """工具注册中心：新增工具后只需在这里实例化一次。"""
+from collections.abc import Callable
+
+from ..models import RunState
 from .base import Tool, ToolContext, ToolRegistry
 from .calculator import CalculateChangeTool
 from .news import ListNewsTool, NEWS_LIST, SAMPLE_URL
@@ -8,7 +11,12 @@ from .sge import SGEDataTool
 from .web import ReadURLTool, parse_html, validate_public_url
 
 
-def create_tool_registry(run, emit, client=None, model=None):
+def create_tool_registry(
+    run: RunState,
+    emit: Callable[..., None],
+    client: object | None = None,
+    model: str | None = None,
+) -> ToolRegistry:
     """绑定一次调查需要的全部工具以及共享上下文。"""
     context = ToolContext(run=run, emit=emit, client=client, model=model)
     read_url = ReadURLTool(context)

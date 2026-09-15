@@ -6,9 +6,11 @@
 import json
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 from .config import settings
+from .llm import ModelResponse, ToolChoice, create_llm
+from .models import RunState
 from .prompts import SYSTEM, REVIEW, STRATEGIES
 from .tools import Tool, create_tool_registry
 
@@ -32,39 +34,33 @@ def safe_error(exc: Exception) -> str:
 
 
 def investigate(
-    run: dict[str, Any],
+    run: RunState,
     emit: Callable[..., None],
-    client: Any = None,
-) -> dict[str, Any]:
+    client: object | None = None,
+) -> RunState:
     cfg = settings()
     if client is None:
         if not cfg["api_key"]:
             raise ValueError("请先在本地 .env 填写 OPENAI_API_KEY，或选择免 Key 教学演示。")
-        from openai import OpenAI
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=45, max_retries=0)
+    llm = create_llm(cfg, client)
     strategy = STRATEGIES[run["strategy"]]
     run["model"] = cfg["model"]
     run["strategy_version"] = strategy["version"]
     tools = create_tool_registry(run, emit, client, cfg["model"])
-    messages: list[Any] = [{"role": "user", "content": run["input"]}]
-    draft: dict[str, Any] | None = None
+    messages: list[object] = [{"role": "user", "content": run["input"]}]
+    draft: dict[str, object] | None = None
     started = time.monotonic()
     report_tool = tools.get("submit_report")
 
     def respond(
         instructions: str,
-        inputs: list[Any],
-        tool_schemas: list[Any],
-        choice: Any = "auto",
-    ) -> Any:
-        result = client.responses.create(model=cfg["model"], instructions=instructions,
-            input=inputs, tools=tool_schemas, tool_choice=choice, parallel_tool_calls=False,
-            max_output_tokens=3000, store=False)
-        usage = getattr(result, "usage", None)
-        run["usage"]["input_tokens"] += getattr(usage, "input_tokens", 0)
-        run["usage"]["output_tokens"] += getattr(usage, "output_tokens", 0)
-        if getattr(result, "status", "completed") != "completed":
-            raise ValueError("模型输出未完成，不能将截断的回复作为核验结果")
+        inputs: list[object],
+        tool_schemas: list[dict[str, object]],
+        choice: ToolChoice = "auto",
+    ) -> ModelResponse:
+        result = llm.respond(instructions, inputs, tool_schemas, choice)
+        run["usage"]["input_tokens"] += result.input_tokens
+        run["usage"]["output_tokens"] += result.output_tokens
         return result
 
     # 第七轮只允许收尾；限制总工具数与总调查时长，不让代理无限搜索。
@@ -74,20 +70,21 @@ def investigate(
         active_schemas = [report_tool.schema()] if finalize else tools.schemas()
         response = respond(SYSTEM + "\n调查策略：" + strategy["instruction"], messages, active_schemas,
                            {"type": "function", "name": "submit_report"} if finalize else "auto")
-        messages.extend(response.output)
-        calls: list[Any] = [item for item in response.output if item.type == "function_call"]
+        messages.extend(response.history_items)
+        calls = response.tool_calls
         if not calls:
             messages.append({"role": "user", "content": "请调用工具继续调查，或调用 submit_report 提交结构化结果。"})
             continue
         for call in calls:
             try:
-                args = json.loads(call.arguments)
-                if not isinstance(args, dict):
-                    raise ValueError("工具参数必须为对象")
+                args = call.arguments
                 selected_tool: Tool = tools.get(call.name)
                 if selected_tool.terminal:
-                    draft = selected_tool.execute(**args)
-                    output: Any = {"accepted": True}
+                    candidate = selected_tool.execute(**args)
+                    if not isinstance(candidate, dict):
+                        raise ValueError("报告工具必须返回对象")
+                    draft = cast(dict[str, object], candidate)
+                    output: object = {"accepted": True}
                 elif finalize or run["usage"]["tool_calls"] >= 12:
                     output = {"error": "工具预算已用尽，请提交报告，未解决事项写入 unresolved。"}
                 else:
@@ -98,12 +95,13 @@ def investigate(
             except Exception as exc:
                 output = {"error": safe_error(exc)}
                 emit("工具受阻", output["error"])
-            messages.append({"type": "function_call_output", "call_id": call.call_id,
+            messages.append({"type": "function_call_output", "call_id": call.id,
                              "output": json.dumps(output, ensure_ascii=False)})
         if draft:
             break
     if draft is None:
         raise ValueError("调查预算内未生成有效报告；已保留过程和证据，请缩小问题后重试。")
+    accepted_draft = draft
 
     emit("审核员", "独立检查证据、口径与结论")
     # 独立上下文：只看原始任务、证据与初稿，不继承调查员过程。
@@ -111,13 +109,15 @@ def investigate(
     try:
         response = respond(REVIEW, [{"role": "user", "content": review_input}], [report_tool.schema()],
                            {"type": "function", "name": "submit_report"})
-        calls = [x for x in response.output if x.type == "function_call" and x.name == "submit_report"]
+        calls = [x for x in response.tool_calls if x.name == "submit_report"]
         if not calls:
             raise ValueError("审核员没有提交有效报告")
-        report = report_tool.execute(**json.loads(calls[0].arguments))
+        report = report_tool.execute(**calls[0].arguments)
+        if not isinstance(report, dict):
+            raise ValueError("报告工具必须返回对象")
         run["review_status"] = "模型审核完成，仍需人工复核"
     except Exception as exc:
-        report = cast(dict[str, Any], draft)
+        report = accepted_draft
         report["review"] = "审核未完成；下列内容为调查初稿。" + safe_error(exc)
         run["review_status"] = "未审核初稿"
         emit("审核受阻", report["review"])

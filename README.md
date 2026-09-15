@@ -123,14 +123,17 @@ GOLD_MODEL=gpt-4.1-mini
 3. `gold_analyst/tools/base.py`：所有工具的共同接口和注册表。
 4. `gold_analyst/tools/__init__.py`：唯一的工具绑定入口。
 5. `gold_analyst/tools/` 里的其他文件：每个文件负责一种工具。
-6. `gold_analyst/agent.py`：核心循环，理解 tool call 怎么接回模型。
-7. `gold_analyst/prompts.py`：调查员、审核员及三个策略的提示词。
+6. `gold_analyst/llm.py`：把 OpenAI SDK 输出转换成项目自己的数据类。
+7. `gold_analyst/agent.py`：只使用 `ModelResponse` 和 `ToolCall` 的核心循环。
+8. `gold_analyst/prompts.py`：调查员、审核员及三个策略的提示词。
 
 ```text
 GoldAnalyst/
 ├── main.py                 运行入口
 ├── gold_analyst/
 │   ├── agent.py            OpenAI Responses 工具调用循环
+│   ├── llm.py              SDK 适配层与稳定响应数据类
+│   ├── models.py           项目运行状态类型
 │   ├── tools/              可扩展工具包
 │   │   ├── base.py         Tool 基类、共享上下文和注册表
 │   │   ├── __init__.py     集中实例化并绑定全部工具
@@ -153,7 +156,7 @@ GoldAnalyst/
 └── reports/                运行后生成，默认不提交
 ```
 
-如果参考 CoreCoder，先只看它的 `agent.py` 和 `tools/base.py`：工具调用协议与循环逻辑。暂时不用学习权限、终端操作和上下文压缩等编码代理功能。
+如果参考 CoreCoder，先看它的 `agent.py`、`llm.py` 和 `tools/base.py`：`llm.py` 隔离供应商 SDK，Agent 因此只处理项目自己的稳定结构。暂时不用学习权限、终端操作和上下文压缩等编码代理功能。
 
 ### 这种 Tool 类和 `@tool` 有什么区别？
 

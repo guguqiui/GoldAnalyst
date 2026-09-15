@@ -1,9 +1,9 @@
 """所有工具共同遵守的最小协议。新增工具时只需继承 Tool。"""
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
 
+from ..models import RunState
 from ..storage import now
 
 
@@ -11,11 +11,11 @@ from ..storage import now
 class ToolContext:
     """一次调查共享的状态和外部依赖，避免每个工具重复传参数。"""
 
-    run: dict[str, Any]
+    run: RunState
     emit: Callable[..., None]
-    client: Any = None
+    client: object | None = None
     model: str | None = None
-    cache: dict[str, Any] = field(default_factory=dict)
+    cache: dict[str, object] = field(default_factory=dict)
 
     def add_evidence(
         self,
@@ -23,8 +23,8 @@ class ToolContext:
         text: str,
         url: str = "",
         kind: str = "source",
-        **extra: Any,
-    ) -> dict[str, Any]:
+        **extra: object,
+    ) -> dict[str, object]:
         item = {
             "id": f"E{len(self.run['evidence']) + 1}",
             "title": title,
@@ -43,13 +43,13 @@ class Tool(ABC):
 
     name: str
     description: str
-    parameters: dict[str, Any]
+    parameters: Mapping[str, object]
     terminal: bool = False
 
     def __init__(self, context: ToolContext):
         self.context = context
 
-    def schema(self) -> dict[str, Any]:
+    def schema(self) -> dict[str, object]:
         """生成 OpenAI Responses API 所需的 function tool schema。"""
         return {
             "type": "function",
@@ -65,7 +65,7 @@ class Tool(ABC):
         }
 
     @abstractmethod
-    def execute(self, **kwargs: Any) -> Any:
+    def execute(self, **kwargs: object) -> object:
         """执行工具并返回可被 JSON 序列化的结果。"""
 
 
@@ -82,7 +82,7 @@ class ToolRegistry:
     def names(self) -> set[str]:
         return set(self._tools)
 
-    def schemas(self, include_terminal: bool = True) -> list[dict[str, Any]]:
+    def schemas(self, include_terminal: bool = True) -> list[dict[str, object]]:
         return [tool.schema() for tool in self._tools.values() if include_terminal or not tool.terminal]
 
     def get(self, name: str) -> Tool:
@@ -91,5 +91,5 @@ class ToolRegistry:
             raise ValueError(f"未知工具：{name}")
         return tool
 
-    def execute(self, name: str, arguments: dict[str, Any]) -> Any:
+    def execute(self, name: str, arguments: dict[str, object]) -> object:
         return self.get(name).execute(**arguments)
