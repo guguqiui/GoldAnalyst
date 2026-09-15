@@ -1,7 +1,8 @@
 """所有工具共同遵守的最小协议。新增工具时只需继承 Tool。"""
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from ..storage import now
 
@@ -10,13 +11,20 @@ from ..storage import now
 class ToolContext:
     """一次调查共享的状态和外部依赖，避免每个工具重复传参数。"""
 
-    run: dict
-    emit: Callable
+    run: dict[str, Any]
+    emit: Callable[..., None]
     client: Any = None
     model: str | None = None
-    cache: dict = field(default_factory=dict)
+    cache: dict[str, Any] = field(default_factory=dict)
 
-    def add_evidence(self, title, text, url="", kind="source", **extra):
+    def add_evidence(
+        self,
+        title: str,
+        text: str,
+        url: str = "",
+        kind: str = "source",
+        **extra: Any,
+    ) -> dict[str, Any]:
         item = {
             "id": f"E{len(self.run['evidence']) + 1}",
             "title": title,
@@ -35,13 +43,13 @@ class Tool(ABC):
 
     name: str
     description: str
-    parameters: dict
-    terminal = False
+    parameters: dict[str, Any]
+    terminal: bool = False
 
     def __init__(self, context: ToolContext):
         self.context = context
 
-    def schema(self):
+    def schema(self) -> dict[str, Any]:
         """生成 OpenAI Responses API 所需的 function tool schema。"""
         return {
             "type": "function",
@@ -57,30 +65,31 @@ class Tool(ABC):
         }
 
     @abstractmethod
-    def execute(self, **kwargs):
+    def execute(self, **kwargs: Any) -> Any:
         """执行工具并返回可被 JSON 序列化的结果。"""
 
 
 class ToolRegistry:
     """集中注册、查找和调用工具；Agent 只依赖这个注册表。"""
 
-    def __init__(self, tools):
-        self._tools = {tool.name: tool for tool in tools}
-        if len(self._tools) != len(tools):
+    def __init__(self, tools: Iterable[Tool]):
+        tool_list = list(tools)
+        self._tools: dict[str, Tool] = {tool.name: tool for tool in tool_list}
+        if len(self._tools) != len(tool_list):
             raise ValueError("工具名称不能重复")
 
     @property
-    def names(self):
+    def names(self) -> set[str]:
         return set(self._tools)
 
-    def schemas(self, include_terminal=True):
+    def schemas(self, include_terminal: bool = True) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values() if include_terminal or not tool.terminal]
 
-    def get(self, name):
+    def get(self, name: str) -> Tool:
         tool = self._tools.get(name)
         if tool is None:
             raise ValueError(f"未知工具：{name}")
         return tool
 
-    def execute(self, name, arguments):
+    def execute(self, name: str, arguments: dict[str, Any]) -> Any:
         return self.get(name).execute(**arguments)
