@@ -122,7 +122,7 @@ class AgentTests(unittest.TestCase):
         run = investigate(new_run("live", "未知", "source_first"), lambda *a: None, client)
         self.assertEqual(run["review_status"], "未审核初稿")
 
-    def test_budget_forces_submission(self):
+    def test_final_round_forces_submission(self):
         client = FakeClient([response()] * 6 + [response(call("submit_report", report([]))), response(call("submit_report", report([])))])
         investigate(new_run("live", "未知", "counter_first"), lambda *a: None, client)
         self.assertEqual(client.requests[6]["tool_choice"], {"type": "function", "name": "submit_report"})

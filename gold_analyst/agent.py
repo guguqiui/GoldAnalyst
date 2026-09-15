@@ -63,9 +63,9 @@ def investigate(
         run["usage"]["output_tokens"] += result.output_tokens
         return result
 
-    # 第七轮只允许收尾；限制总工具数与总调查时长，不让代理无限搜索。
+    # 前六轮每轮至多调用一个研究工具；第七轮只允许提交报告。
     for round_number in range(7):
-        finalize = round_number == 6 or run["usage"]["tool_calls"] >= 12 or time.monotonic() - started > 240
+        finalize = round_number == 6 or time.monotonic() - started > 240
         emit("调查员", "整理现有证据并提交报告" if finalize else f"第 {round_number + 1} 轮：选择下一步调查")
         active_schemas = [report_tool.schema()] if finalize else tools.schemas()
         response = respond(SYSTEM + "\n调查策略：" + strategy["instruction"], messages, active_schemas,
@@ -85,8 +85,8 @@ def investigate(
                         raise ValueError("报告工具必须返回对象")
                     draft = cast(dict[str, object], candidate)
                     output: object = {"accepted": True}
-                elif finalize or run["usage"]["tool_calls"] >= 12:
-                    output = {"error": "工具预算已用尽，请提交报告，未解决事项写入 unresolved。"}
+                elif finalize:
+                    output = {"error": "调查轮次已用尽，请提交报告，未解决事项写入 unresolved。"}
                 else:
                     run["usage"]["tool_calls"] += 1
                     emit("调用工具", call.name, args)
