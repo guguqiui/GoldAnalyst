@@ -1,0 +1,9 @@
+[project]
+name = "gold-analyst"
+version = "0.1.0"
+description = "面向初学者的黄金新闻调查员：工具调用、证据记录与核验"
+requires-python = ">=3.10"
+dependencies = ["beautifulsoup4>=4.12,<5", "requests>=2.32,<3", "openai>=1.0,<3", "python-dotenv>=1.0,<2", "pypdf>=5,<7"]
+
+[tool.ruff]
+line-length = 110
