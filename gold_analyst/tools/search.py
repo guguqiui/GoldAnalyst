@@ -6,10 +6,12 @@ from openai import OpenAI
 
 from .base import Tool
 
+MAX_SEARCH_REQUESTS = 5
+
 
 class SearchWebTool(Tool):
     name = "search_web"
-    description = "通过 OpenAI 联网搜索查找原始证据，最多三次；需继续检查原文。"
+    description = f"通过 OpenAI 联网搜索查找原始证据，最多 {MAX_SEARCH_REQUESTS} 次；需继续检查原文。"
     parameters = {"query": {"type": "string"}}
 
     def __init__(self, context):
@@ -21,8 +23,10 @@ class SearchWebTool(Tool):
         if self.context.client is None:
             raise ValueError("联网搜索需要配置 OpenAI API Key")
         with self.search_lock:
-            if self.search_count >= 3:
-                raise ValueError("已达到本次 3 次搜索请求的预算，请利用现有资料完成或说明证据不足")
+            if self.search_count >= MAX_SEARCH_REQUESTS:
+                raise ValueError(
+                    f"已达到本次 {MAX_SEARCH_REQUESTS} 次搜索请求的预算，请利用现有资料完成或说明证据不足"
+                )
             self.search_count += 1
         client = cast(OpenAI, self.context.client)
         response = client.responses.create(

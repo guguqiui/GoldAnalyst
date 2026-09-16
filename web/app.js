@@ -19,7 +19,7 @@ function setMode(next) {
   $('task').disabled = mode === 'demo'; $('strategy').disabled = mode === 'demo';
   $('start').innerHTML = (mode === 'demo' ? '运行教学演示' : '开始联网调查') + ' <span>→</span>';
   $('mode-note').textContent = mode === 'demo' ? '免 Key · 虚构资料 · 固定流程，先看一遍完整效果。' : 'OpenAI 自主调用工具，调查员完成后交由审核员检查。';
-  $('budget').textContent = mode === 'demo' ? '演示不调用模型、不消耗 API 额度。' : '最多 12 次研究工具调用、3 次搜索请求。联网与模型调用会消耗 API 额度。';
+  $('budget').textContent = mode === 'demo' ? '演示不调用模型、不消耗 API 额度。' : '最多 12 次研究工具调用、5 次搜索请求。联网与模型调用会消耗 API 额度。';
   $('form-error').classList.add('hidden');
 }
 $('demo-mode').onclick = () => setMode('demo'); $('live-mode').onclick = () => setMode('live');
