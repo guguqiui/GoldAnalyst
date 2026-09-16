@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from gold_analyst.agent import investigate, safe_error
 from gold_analyst.demo import demonstrate
+from gold_analyst.models import ResearchBudget
 from gold_analyst.server import new_run
 from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
 from gold_analyst.tools.calculator import CalculateChangeTool
@@ -98,6 +99,20 @@ class ParsingTests(unittest.TestCase):
 
 
 class AgentTests(unittest.TestCase):
+    def test_custom_research_budget_controls_final_round(self):
+        client = FakeClient([
+            response(),
+            response(call("submit_report", report([]), 2)),
+            response(call("submit_report", report([]), 3)),
+        ])
+        investigate(
+            new_run("live", "小预算调查", "source_first"),
+            lambda *a: None,
+            client,
+            ResearchBudget(rounds=1, tool_calls=2, parallel_tools=1, duration_seconds=30),
+        )
+        self.assertEqual(client.requests[1]["tool_choice"], {"type": "function", "name": "submit_report"})
+
     def test_multiple_tools_run_in_parallel(self):
         barrier = threading.Barrier(2)
         original_execute = CalculateChangeTool.execute

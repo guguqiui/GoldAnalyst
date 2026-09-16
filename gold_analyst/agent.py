@@ -11,14 +11,9 @@ from typing import cast
 
 from .config import settings
 from .llm import ModelResponse, ToolCall, ToolChoice, create_llm
-from .models import RunState
+from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import SYSTEM, REVIEW, STRATEGIES
 from .tools import Tool, create_tool_registry
-
-
-MAX_RESEARCH_ROUNDS = 6
-MAX_RESEARCH_TOOL_CALLS = 12
-MAX_PARALLEL_TOOLS = 4
 
 
 def safe_error(exc: Exception) -> str:
@@ -43,6 +38,7 @@ def investigate(
     run: RunState,
     emit: Callable[..., None],
     client: object | None = None,
+    budget: ResearchBudget = DEFAULT_RESEARCH_BUDGET,
 ) -> RunState:
     cfg = settings()
     if client is None:
@@ -82,11 +78,11 @@ def investigate(
             return index, output
 
     # 前六轮允许模型一次选择多个研究工具；第七轮只允许提交报告。
-    for round_number in range(MAX_RESEARCH_ROUNDS + 1):
+    for round_number in range(budget.rounds + 1):
         finalize = (
-            round_number == MAX_RESEARCH_ROUNDS
-            or run["usage"]["tool_calls"] >= MAX_RESEARCH_TOOL_CALLS
-            or time.monotonic() - started > 240
+            round_number == budget.rounds
+            or run["usage"]["tool_calls"] >= budget.tool_calls
+            or time.monotonic() - started > budget.duration_seconds
         )
         emit("调查员", "整理现有证据并提交报告" if finalize else f"第 {round_number + 1} 轮：选择下一步调查")
         active_schemas = [report_tool.schema()] if finalize else tools.schemas()
@@ -130,7 +126,7 @@ def investigate(
             for index in research_indexes:
                 outputs[index] = {"error": "调查预算已用尽，请提交报告，未解决事项写入 unresolved。"}
         else:
-            remaining = MAX_RESEARCH_TOOL_CALLS - run["usage"]["tool_calls"]
+            remaining = budget.tool_calls - run["usage"]["tool_calls"]
             allowed = research_indexes[:remaining]
             for index in research_indexes[remaining:]:
                 outputs[index] = {"error": "研究工具总预算已用尽，请利用已有结果提交报告。"}
@@ -140,7 +136,7 @@ def investigate(
                 result_index, result = execute_research(index, calls[index], resolved[index])
                 outputs[result_index] = result
             elif allowed:
-                with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_TOOLS, len(allowed))) as pool:
+                with ThreadPoolExecutor(max_workers=min(budget.parallel_tools, len(allowed))) as pool:
                     futures = [pool.submit(execute_research, index, calls[index], resolved[index]) for index in allowed]
                     for future in futures:
                         result_index, result = future.result()

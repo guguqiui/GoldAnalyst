@@ -4,6 +4,8 @@
 
 这是面向 Python/Agent 初学者的第一版原型。参考 [CoreCoder](https://github.com/he-yufeng/CoreCoder/) 的「模型 → 工具 → 模型」循环思想，独立实现黄金研究工具；没有复制它的源码，也不需要安装 CoreCoder。
 
+V2 的多策略研究与进化路线见 [`docs/V2.md`](docs/V2.md)。
+
 ## 先看到效果（不需要 API Key）
 
 在本项目目录打开终端：
