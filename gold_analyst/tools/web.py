@@ -102,8 +102,9 @@ class ReadURLTool(Tool):
     parameters = {"url": {"type": "string"}}
 
     def execute(self, url):
-        if url in self.context.cache:
-            return self.context.cache[url]
+        cached = self.context.get_cached(url)
+        if cached is not None:
+            return cached
         data, content_type, resolved_url = fetch(url)
         if "pdf" in content_type or data.startswith(b"%PDF"):
             from pypdf import PdfReader
@@ -130,5 +131,5 @@ class ReadURLTool(Tool):
         hostname = urlparse(resolved_url).hostname or ""
         kind = "news" if hostname == "10jqka.com.cn" or hostname.endswith(".10jqka.com.cn") else "source"
         item = self.context.add_evidence(url=resolved_url, kind=kind, **parsed)
-        self.context.cache[url] = item
+        self.context.set_cached(url, item)
         return item

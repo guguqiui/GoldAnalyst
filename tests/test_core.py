@@ -1,5 +1,6 @@
 import copy
 import json
+import threading
 import unittest
 from types import SimpleNamespace as NS
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from gold_analyst.agent import investigate, safe_error
 from gold_analyst.demo import demonstrate
 from gold_analyst.server import new_run
 from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
+from gold_analyst.tools.calculator import CalculateChangeTool
 from gold_analyst.verification import calculate_change, validate_report
 
 
@@ -96,6 +98,56 @@ class ParsingTests(unittest.TestCase):
 
 
 class AgentTests(unittest.TestCase):
+    def test_multiple_tools_run_in_parallel(self):
+        barrier = threading.Barrier(2)
+        original_execute = CalculateChangeTool.execute
+
+        def synchronized_execute(tool, current, previous):
+            barrier.wait(timeout=2)
+            return original_execute(tool, current, previous)
+
+        client = FakeClient([
+            response(
+                call("calculate_change", {"current": "620", "previous": "610"}, 1),
+                call("calculate_change", {"current": "625", "previous": "620"}, 2),
+            ),
+            response(call("submit_report", report(), 3)),
+            response(call("submit_report", report(), 4)),
+        ])
+        with patch.object(CalculateChangeTool, "execute", synchronized_execute):
+            run = investigate(new_run("live", "并行计算", "scope_first"), lambda *a: None, client)
+
+        outputs = [
+            item for item in client.requests[1]["input"]
+            if isinstance(item, dict) and item.get("type") == "function_call_output"
+        ]
+        self.assertEqual(len(outputs), 2)
+        self.assertTrue(client.requests[0]["parallel_tool_calls"])
+        self.assertEqual(run["usage"]["tool_calls"], 2)
+        self.assertEqual({item["id"] for item in run["evidence"]}, {"E1", "E2"})
+
+    def test_parallel_batch_respects_total_tool_budget(self):
+        batch = [
+            call("calculate_change", {"current": str(620 + index), "previous": "610"}, index)
+            for index in range(1, 14)
+        ]
+        client = FakeClient([
+            response(*batch),
+            response(call("submit_report", report(), 20)),
+            response(call("submit_report", report(), 21)),
+        ])
+        run = investigate(new_run("live", "批量计算", "scope_first"), lambda *a: None, client)
+
+        outputs = [
+            item for item in client.requests[1]["input"]
+            if isinstance(item, dict) and item.get("type") == "function_call_output"
+        ]
+        self.assertEqual(run["usage"]["tool_calls"], 12)
+        self.assertEqual(len(run["evidence"]), 12)
+        self.assertEqual(len(outputs), 13)
+        self.assertIn("总预算已用尽", outputs[-1]["output"])
+        self.assertEqual(client.requests[1]["tool_choice"], {"type": "function", "name": "submit_report"})
+
     def test_tool_result_returned_and_review_is_independent(self):
         client = FakeClient([response(call("calculate_change", {"current": "620", "previous": "610"})),
                              response(call("submit_report", report(), 2)),

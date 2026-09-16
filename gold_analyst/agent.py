@@ -5,14 +5,20 @@
 """
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable
 from typing import cast
 
 from .config import settings
-from .llm import ModelResponse, ToolChoice, create_llm
+from .llm import ModelResponse, ToolCall, ToolChoice, create_llm
 from .models import RunState
 from .prompts import SYSTEM, REVIEW, STRATEGIES
 from .tools import Tool, create_tool_registry
+
+
+MAX_RESEARCH_ROUNDS = 6
+MAX_RESEARCH_TOOL_CALLS = 12
+MAX_PARALLEL_TOOLS = 4
 
 
 def safe_error(exc: Exception) -> str:
@@ -63,9 +69,25 @@ def investigate(
         run["usage"]["output_tokens"] += result.output_tokens
         return result
 
-    # 前六轮每轮至多调用一个研究工具；第七轮只允许提交报告。
-    for round_number in range(7):
-        finalize = round_number == 6 or time.monotonic() - started > 240
+    def execute_research(index: int, call: ToolCall, tool: Tool) -> tuple[int, object]:
+        """在线程中执行一个研究工具；异常转换成模型可读的工具结果。"""
+        try:
+            emit("调用工具", call.name, call.arguments)
+            output = tool.execute(**call.arguments)
+            emit("工具完成", call.name)
+            return index, output
+        except Exception as exc:
+            output = {"error": safe_error(exc)}
+            emit("工具受阻", output["error"])
+            return index, output
+
+    # 前六轮允许模型一次选择多个研究工具；第七轮只允许提交报告。
+    for round_number in range(MAX_RESEARCH_ROUNDS + 1):
+        finalize = (
+            round_number == MAX_RESEARCH_ROUNDS
+            or run["usage"]["tool_calls"] >= MAX_RESEARCH_TOOL_CALLS
+            or time.monotonic() - started > 240
+        )
         emit("调查员", "整理现有证据并提交报告" if finalize else f"第 {round_number + 1} 轮：选择下一步调查")
         active_schemas = [report_tool.schema()] if finalize else tools.schemas()
         response = respond(SYSTEM + "\n调查策略：" + strategy["instruction"], messages, active_schemas,
@@ -75,26 +97,57 @@ def investigate(
         if not calls:
             messages.append({"role": "user", "content": "请调用工具继续调查，或调用 submit_report 提交结构化结果。"})
             continue
-        for call in calls:
+        outputs: dict[int, object] = {}
+        resolved: dict[int, Tool] = {}
+        for index, call in enumerate(calls):
             try:
-                args = call.arguments
-                selected_tool: Tool = tools.get(call.name)
-                if selected_tool.terminal:
-                    candidate = selected_tool.execute(**args)
+                resolved[index] = tools.get(call.name)
+            except Exception as exc:
+                outputs[index] = {"error": safe_error(exc)}
+
+        terminal_indexes = [index for index, tool in resolved.items() if tool.terminal]
+        if terminal_indexes:
+            if len(calls) == 1:
+                index = terminal_indexes[0]
+                try:
+                    candidate = resolved[index].execute(**calls[index].arguments)
                     if not isinstance(candidate, dict):
                         raise ValueError("报告工具必须返回对象")
                     draft = cast(dict[str, object], candidate)
-                    output: object = {"accepted": True}
-                elif finalize:
-                    output = {"error": "调查轮次已用尽，请提交报告，未解决事项写入 unresolved。"}
-                else:
-                    run["usage"]["tool_calls"] += 1
-                    emit("调用工具", call.name, args)
-                    output = selected_tool.execute(**args)
-                    emit("工具完成", call.name)
-            except Exception as exc:
-                output = {"error": safe_error(exc)}
-                emit("工具受阻", output["error"])
+                    outputs[index] = {"accepted": True}
+                except Exception as exc:
+                    error = safe_error(exc)
+                    outputs[index] = {"error": error}
+                    emit("工具受阻", error)
+            else:
+                for index in terminal_indexes:
+                    outputs[index] = {
+                        "error": "submit_report 不能与研究工具在同一批调用；请先读取本批结果，下一轮再提交。"
+                    }
+
+        research_indexes = [index for index, tool in resolved.items() if not tool.terminal]
+        if finalize:
+            for index in research_indexes:
+                outputs[index] = {"error": "调查预算已用尽，请提交报告，未解决事项写入 unresolved。"}
+        else:
+            remaining = MAX_RESEARCH_TOOL_CALLS - run["usage"]["tool_calls"]
+            allowed = research_indexes[:remaining]
+            for index in research_indexes[remaining:]:
+                outputs[index] = {"error": "研究工具总预算已用尽，请利用已有结果提交报告。"}
+            run["usage"]["tool_calls"] += len(allowed)
+            if len(allowed) == 1:
+                index = allowed[0]
+                result_index, result = execute_research(index, calls[index], resolved[index])
+                outputs[result_index] = result
+            elif allowed:
+                with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_TOOLS, len(allowed))) as pool:
+                    futures = [pool.submit(execute_research, index, calls[index], resolved[index]) for index in allowed]
+                    for future in futures:
+                        result_index, result = future.result()
+                        outputs[result_index] = result
+
+        for index, call in enumerate(calls):
+            output = outputs.get(index, {"error": "工具调用未执行。"})
             messages.append({"type": "function_call_output", "call_id": call.id,
                              "output": json.dumps(output, ensure_ascii=False)})
         if draft:

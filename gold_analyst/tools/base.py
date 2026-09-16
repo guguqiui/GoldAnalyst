@@ -2,6 +2,8 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from _thread import LockType
+from threading import Lock
 
 from ..models import RunState
 from ..storage import now
@@ -16,6 +18,7 @@ class ToolContext:
     client: object | None = None
     model: str | None = None
     cache: dict[str, object] = field(default_factory=dict)
+    lock: LockType = field(default_factory=Lock, repr=False)
 
     def add_evidence(
         self,
@@ -25,17 +28,32 @@ class ToolContext:
         kind: str = "source",
         **extra: object,
     ) -> dict[str, object]:
-        item = {
-            "id": f"E{len(self.run['evidence']) + 1}",
-            "title": title,
-            "text": text,
-            "url": url,
-            "kind": kind,
-            "retrieved_at": now(),
-            **extra,
-        }
-        self.run["evidence"].append(item)
+        with self.lock:
+            item = {
+                "id": f"E{len(self.run['evidence']) + 1}",
+                "title": title,
+                "text": text,
+                "url": url,
+                "kind": kind,
+                "retrieved_at": now(),
+                **extra,
+            }
+            self.run["evidence"].append(item)
         return item
+
+    def get_cached(self, key: str) -> object | None:
+        with self.lock:
+            return self.cache.get(key)
+
+    def set_cached(self, key: str, value: object) -> None:
+        with self.lock:
+            self.cache[key] = value
+
+    def add_search_usage(self, input_tokens: int, output_tokens: int) -> None:
+        with self.lock:
+            self.run["usage"]["input_tokens"] += input_tokens
+            self.run["usage"]["output_tokens"] += output_tokens
+            self.run["usage"]["search_requests"] += 1
 
 
 class Tool(ABC):

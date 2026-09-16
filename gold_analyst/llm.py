@@ -53,7 +53,7 @@ class ResponsesLLM:
             input=cast(ResponseInputParam, inputs),
             tools=cast(list[FunctionToolParam], tools),
             tool_choice=tool_choice,
-            parallel_tool_calls=False,
+            parallel_tool_calls=True,
             max_output_tokens=3000,
             store=False,
         )
