@@ -39,6 +39,7 @@ def investigate(
     emit: Callable[..., None],
     client: object | None = None,
     budget: ResearchBudget = DEFAULT_RESEARCH_BUDGET,
+    review: bool = True,
 ) -> RunState:
     cfg = settings()
     if client is None:
@@ -151,6 +152,12 @@ def investigate(
     if draft is None:
         raise ValueError("调查预算内未生成有效报告；已保留过程和证据，请缩小问题后重试。")
     accepted_draft = draft
+
+    if not review:
+        run["report"] = accepted_draft
+        run["review_status"] = "候选报告待裁判审核"
+        run["notice"] = "独立研究员候选报告；最终结论由裁判合并。"
+        return run
 
     emit("审核员", "独立检查证据、口径与结论")
     # 独立上下文：只看原始任务、证据与初稿，不继承调查员过程。

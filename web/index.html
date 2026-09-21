@@ -9,7 +9,7 @@
 <aside>
 <form id="investigation" class="panel compose">
 <div class="section-label"><span>01 / 开始调查</span><span class="gold-dot"></span></div>
-<div class="tabs" role="group" aria-label="调查模式"><button type="button" id="demo-mode" class="selected">教学演示</button><button type="button" id="live-mode">联网调查</button></div>
+<div class="tabs" role="group" aria-label="调查模式"><button type="button" id="demo-mode" class="selected">教学演示</button><button type="button" id="live-mode">单调查员</button><button type="button" id="multi-mode">Multi-Agent</button></div>
 <p id="mode-note" class="hint">免 Key · 虚构资料 · 固定流程，先看一遍完整效果。</p>
 <label for="task">新闻链接或待核验说法</label><textarea id="task" rows="5" placeholder="粘贴一条黄金新闻链接，或输入你想核实的说法…"></textarea>
 <button class="text-button" type="button" id="sample">填入同花顺真实新闻案例 ↗</button>
@@ -28,7 +28,7 @@
 <div id="notice" class="notice"></div><div id="run-error" class="error hidden"></div>
 <div class="metrics"><div><span id="metric-claims">—</span><small>核验说法</small></div><div><span id="metric-evidence">0</span><small>证据记录</small></div><div><span id="metric-tools">0</span><small>工具调用</small></div><div><span id="metric-time">—</span><small>耗时 / 秒</small></div></div>
 <section class="panel trace"><div class="section-label">02 / 调查过程 <span id="trace-label">保留行动与工具记录</span></div><ol id="events"></ol></section>
-<section id="report-section" class="hidden"><div class="report-toolbar"><h3>03 / 核验结论</h3><a id="download" class="text-button" download="gold-report.md">下载报告 ↓</a></div><p id="summary" class="summary"></p><div id="claims"></div><div class="panel unresolved"><h3>仍需确认</h3><ul id="unresolved"></ul><p id="review" class="fine"></p><p id="validation" class="fine"></p></div></section>
+<section id="report-section" class="hidden"><div class="report-toolbar"><h3>03 / 核验结论</h3><a id="download" class="text-button" download="gold-report.md">下载报告 ↓</a></div><p id="summary" class="summary"></p><div id="candidates-section" class="hidden"><h3>三个研究员的候选结果</h3><div id="candidates" class="candidates"></div></div><div id="claims"></div><div class="panel unresolved"><h3>仍需确认</h3><ul id="unresolved"></ul><p id="review" class="fine"></p><p id="validation" class="fine"></p></div></section>
 <section class="sources"><h3>04 / 证据资料</h3><div id="evidence"></div></section>
 <p id="usage" class="fine"></p>
 </div>

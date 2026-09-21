@@ -6,14 +6,15 @@ import re
 import threading
 import time
 from urllib.parse import urlparse
-from uuid import uuid4
 
 from .agent import investigate, safe_error
 from .config import ROOT, public_settings
 from .demo import demonstrate
 from .models import RunState
+from .multi_agent import investigate_multi
 from .prompts import STRATEGIES
 from .storage import now, save_run, markdown
+from .server_state import blank_run
 
 RUNS = {}
 LOCK = threading.Lock()
@@ -21,9 +22,7 @@ POOL = ThreadPoolExecutor(max_workers=1)
 
 
 def new_run(mode: str, task: str, strategy: str) -> RunState:
-    return {"id": uuid4().hex[:16], "mode": mode, "input": task, "strategy": strategy,
-            "created_at": now(), "status": "running", "events": [], "evidence": [],
-            "usage": {"input_tokens": 0, "output_tokens": 0, "tool_calls": 0, "search_requests": 0}}
+    return blank_run(mode, task, strategy)
 
 
 def execute(run):
@@ -33,7 +32,8 @@ def execute(run):
         with LOCK:
             run["events"].append({"time": now(), "stage": stage, "message": message, "details": details})
     try:
-        (demonstrate if run["mode"] == "demo" else investigate)(run, emit)
+        worker = demonstrate if run["mode"] == "demo" else investigate_multi if run["mode"] == "multi" else investigate
+        worker(run, emit)
         run["status"] = "completed"
         emit("完成", "核验报告与证据已整理")
     except Exception as exc:
@@ -130,11 +130,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("需要 JSON 请求")
             data = json.loads(self.rfile.read(length))
             mode, task, strategy = data.get("mode"), data.get("input", ""), data.get("strategy", "source_first")
-            if mode not in {"demo", "live"} or strategy not in STRATEGIES:
+            if mode not in {"demo", "live", "multi"} or strategy not in STRATEGIES:
                 raise ValueError("请选择有效模式与策略")
-            if not isinstance(task, str) or len(task) > 4000 or (mode == "live" and not task.strip()):
+            if not isinstance(task, str) or len(task) > 4000 or (mode in {"live", "multi"} and not task.strip()):
                 raise ValueError("请输入新闻链接或不超过 4000 字的待核验说法")
-            if mode == "live" and not public_settings()["model_ready"]:
+            if mode in {"live", "multi"} and not public_settings()["model_ready"]:
                 raise ValueError("请在本地 .env 配置 OpenAI Key 后重启服务，或先体验教学演示。")
             with LOCK:
                 if any(r["status"] == "running" for r in RUNS.values()):

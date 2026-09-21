@@ -23,6 +23,13 @@ def markdown(run):
                   f"获取时间：{e['retrieved_at']}", "", e.get("text", ""), ""]
         for citation in e.get("citations", []):
             lines += [f"- {citation.get('title', '')}：{citation.get('url', '')}"]
+    if run.get("candidates"):
+        lines += ["## Multi-Agent 候选", ""]
+        for candidate in run["candidates"]:
+            candidate_report = candidate.get("report", {})
+            lines += [f"### {candidate.get('strategy_name', candidate.get('strategy', '研究员'))}", "",
+                      f"状态：{candidate.get('status', 'unknown')} · 证据 {candidate.get('evidence_count', 0)} 条", "",
+                      candidate_report.get("summary", candidate.get("error", "未生成报告")), ""]
     lines += ["## 审核", "", report.get("review", "尚未进行模型语义审核。")]
     return "\n".join(lines)
 

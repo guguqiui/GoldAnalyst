@@ -45,3 +45,5 @@ class RunState(TypedDict, total=False):
     error: str
     save_error: str
     duration_seconds: float
+    candidates: list[dict[str, object]]
+    adjudication: list[dict[str, object]]

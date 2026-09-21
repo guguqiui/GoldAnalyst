@@ -8,6 +8,7 @@ from unittest.mock import patch
 from gold_analyst.agent import investigate, safe_error
 from gold_analyst.demo import demonstrate
 from gold_analyst.models import ResearchBudget
+from gold_analyst.multi_agent import investigate_multi, merge_candidates
 from gold_analyst.server import new_run
 from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
 from gold_analyst.tools.calculator import CalculateChangeTool
@@ -193,6 +194,49 @@ class AgentTests(unittest.TestCase):
         client = FakeClient([response()] * 6 + [response(call("submit_report", report([]))), response(call("submit_report", report([])))])
         investigate(new_run("live", "未知", "counter_first"), lambda *a: None, client)
         self.assertEqual(client.requests[6]["tool_choice"], {"type": "function", "name": "submit_report"})
+
+
+class MultiAgentTests(unittest.TestCase):
+    def candidate(self, strategy, evidence, refs):
+        run = new_run("live", "黄金说法", strategy)
+        run["status"] = "completed"
+        run["evidence"] = evidence
+        run["report"] = report(refs)
+        return run
+
+    def test_merge_deduplicates_source_and_rewrites_references(self):
+        first = self.candidate("source_first", [{"id": "E1", "title": "上金所", "text": "620",
+            "url": "https://sge.com.cn/data?utm_source=x", "kind": "source", "retrieved_at": "now"}], ["E1"])
+        second = self.candidate("scope_first", [{"id": "E1", "title": "同一页", "text": "620",
+            "url": "https://sge.com.cn/data", "kind": "source", "retrieved_at": "now"}], ["E1"])
+        evidence, candidates = merge_candidates([first, second])
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["researchers"], ["source_first", "scope_first"])
+        self.assertEqual(candidates[0]["report"]["claims"][0]["evidence_ids"], ["E1"])
+        self.assertEqual(candidates[1]["report"]["claims"][0]["evidence_ids"], ["E1"])
+
+    @patch("gold_analyst.multi_agent.investigate")
+    def test_three_researchers_are_isolated_and_one_may_fail(self, fake_investigate):
+        barrier = threading.Barrier(3)
+
+        def research(child, emit, client, budget, review):
+            barrier.wait(timeout=2)
+            if child["strategy"] == "counter_first":
+                raise ValueError("候选失败")
+            child["evidence"].append({"id": "E1", "title": child["strategy"], "text": "620",
+                "url": "https://example.com/" + child["strategy"], "kind": "source", "retrieved_at": "now"})
+            child["report"] = report(["E1"])
+            child["usage"]["tool_calls"] = 1
+            return child
+
+        fake_investigate.side_effect = research
+        client = FakeClient([response(call("submit_report", report(["E1"]), 9))])
+        run = investigate_multi(new_run("multi", "黄金说法", "source_first"), lambda *a: None, client)
+        self.assertEqual(len(run["candidates"]), 3)
+        self.assertEqual([x["status"] for x in run["candidates"]].count("failed"), 1)
+        self.assertEqual(len(run["evidence"]), 2)
+        self.assertEqual(run["usage"]["tool_calls"], 2)
+        self.assertIn("2/3", run["review_status"])
 
 
 class ToolRegistryTests(unittest.TestCase):

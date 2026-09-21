@@ -8,13 +8,17 @@ def main():
     parser = argparse.ArgumentParser(description="黄金信息调查员")
     parser.add_argument("--demo", action="store_true", help="不联网、不用 Key，运行虚构教学样例")
     parser.add_argument("--investigate", metavar="URL_OR_CLAIM", help="使用 OpenAI 调查真实新闻链接或说法")
+    parser.add_argument("--multi", action="store_true", help="用三个研究员并行调查，再由裁判合并")
     parser.add_argument("--strategy", default="source_first", choices=["source_first", "scope_first", "counter_first"])
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    if args.demo and args.investigate:
-        parser.error("--demo 与 --investigate 不能同时使用")
+    if args.demo and (args.investigate or args.multi):
+        parser.error("--demo 不能与 --investigate/--multi 同时使用")
+    if args.multi and not args.investigate:
+        parser.error("--multi 需要同时提供 --investigate")
     if args.demo or args.investigate:
-        run = execute(new_run("demo" if args.demo else "live", args.investigate or "", args.strategy))
+        mode = "demo" if args.demo else "multi" if args.multi else "live"
+        run = execute(new_run(mode, args.investigate or "", args.strategy))
         if run["status"] == "failed":
             print(run["error"])
             raise SystemExit(1)
