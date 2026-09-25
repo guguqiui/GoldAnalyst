@@ -2,8 +2,6 @@
 
 输入一条黄金新闻或说法 → AI 自主读资料、搜索与计算 → 独立审核 → 输出带证据的核验报告。
 
-这是面向 Python/Agent 初学者的第一版原型。参考 [CoreCoder](https://github.com/he-yufeng/CoreCoder/) 的「模型 → 工具 → 模型」循环思想，独立实现黄金研究工具；没有复制它的源码，也不需要安装 CoreCoder。
-
 ## 先看到效果（不需要 API Key）
 
 在本项目目录打开终端：
