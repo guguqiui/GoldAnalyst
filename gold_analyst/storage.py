@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import json
 from .config import ROOT
+from .local_state import save_local_run
 
 
 def now():
@@ -46,5 +47,7 @@ def save_run(run):
     folder.mkdir(parents=True, exist_ok=True)
     json_path = folder / f"{run['id']}.json"
     json_path.write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
-    (folder / f"{run['id']}.md").write_text(markdown(run), encoding="utf-8")
+    report_markdown = markdown(run)
+    (folder / f"{run['id']}.md").write_text(report_markdown, encoding="utf-8")
+    save_local_run(run, report_markdown)
     return json_path

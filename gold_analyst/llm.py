@@ -31,6 +31,7 @@ class ModelResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    raw_response: object | None = None
 
 
 class ResponsesLLM:
@@ -81,6 +82,7 @@ class ResponsesLLM:
             tool_calls=calls,
             input_tokens=usage.input_tokens if usage else 0,
             output_tokens=usage.output_tokens if usage else 0,
+            raw_response=response,
         )
 
 

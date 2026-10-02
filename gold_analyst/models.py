@@ -7,10 +7,10 @@ from typing import TypedDict
 class ResearchBudget:
     """一次研究的资源上限；V2 可把这些参数作为策略基因的一部分。"""
 
-    rounds: int = 6
-    tool_calls: int = 12
+    rounds: int = 10
+    tool_calls: int = 20
     parallel_tools: int = 4
-    duration_seconds: int = 240
+    duration_seconds: int = 360
 
     def __post_init__(self) -> None:
         if min(self.rounds, self.tool_calls, self.parallel_tools, self.duration_seconds) < 1:
@@ -48,3 +48,4 @@ class RunState(TypedDict, total=False):
     candidates: list[dict[str, object]]
     adjudication: list[dict[str, object]]
     artifact_group: str
+    message_files: list[str]

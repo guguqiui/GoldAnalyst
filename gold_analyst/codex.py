@@ -1,24 +1,66 @@
 """VT 风格的实验性 Codex OAuth 适配；不读取 VT 或 Codex CLI 的凭据。
 
-这里只负责登录和协议转换。Agent 仍然得到一份完整 Responses 响应，
-不需要了解网络底层的流式事件，也不会把半成品报告推给页面。
+这里只负责登录和协议转换。Codex 的函数调用散落在 SSE 事件中，因此这里像
+Vibe-Trading 一样直接读取原始事件，再组装成 Agent 能使用的 Responses 响应。
 """
 import base64
+from collections.abc import Iterable
 import json
 import threading
 import time
 
-from openai import OpenAI
+import httpx
 
 from .config import ROOT
 
 TOKEN_PATH = ROOT / ".local" / "codex.json"
 LOGIN_HINT = "请运行 uv run python main.py --login-codex 完成独立登录。"
 _TOKEN_LOCK = threading.Lock()
+_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 
 
 class CodexLoginError(ValueError):
     """只包含可公开展示的登录提示，不携带 OAuth 原始响应。"""
+
+
+class _JsonObject:
+    """让原始 JSON 同时支持 SDK 风格的属性访问和 model_dump。"""
+
+    def __init__(self, payload: dict[str, object]):
+        self._payload = payload
+        for key, value in payload.items():
+            setattr(self, key, self._convert(value))
+
+    @staticmethod
+    def _convert(value):
+        if isinstance(value, dict):
+            return _JsonObject(value)
+        if isinstance(value, list):
+            return [_JsonObject._convert(item) for item in value]
+        return value
+
+    def model_dump(self, **kwargs):
+        return dict(self._payload)
+
+
+class _ResponseWithStreamEvents(_JsonObject):
+    """完整响应对象；本地轨迹额外保留未转换的 SSE 事件。"""
+
+    def __init__(self, payload: dict[str, object], stream_events: list[dict[str, object]]):
+        super().__init__(payload)
+        self._stream_events = stream_events
+        texts: list[str] = []
+        for item in getattr(self, "output", []):
+            for content in getattr(item, "content", []):
+                text = getattr(content, "text", None)
+                if getattr(content, "type", "") == "output_text" and isinstance(text, str):
+                    texts.append(text)
+        self.output_text = "".join(texts)
+
+    def model_dump(self, **kwargs):
+        payload = super().model_dump(**kwargs)
+        payload["stream_events"] = self._stream_events
+        return payload
 
 
 def token_storage():
@@ -72,6 +114,111 @@ def get_credentials():
             raise CodexLoginError("Codex 登录缺失、过期或刷新失败。" + LOGIN_HINT) from None
 
 
+def _jsonable(value):
+    """将上一轮 SDK 输出还原成 Codex HTTP 端点接受的 JSON。"""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return _jsonable(value.model_dump(mode="json", exclude_none=True))
+    raise TypeError(f"Codex 请求中出现不能序列化的类型：{type(value).__name__}")
+
+
+def _events_from_lines(lines: Iterable[str]) -> Iterable[dict[str, object]]:
+    """按 SSE 空行分帧；保留服务端事件原始字段，不依赖 SDK 的联合类型。"""
+    buffer: list[str] = []
+
+    def flush():
+        data_lines = [line[5:].strip() for line in buffer if line.startswith("data:")]
+        buffer.clear()
+        data = "\n".join(data_lines).strip()
+        if not data or data == "[DONE]":
+            return None
+        try:
+            event = json.loads(data)
+        except json.JSONDecodeError:
+            return None
+        return event if isinstance(event, dict) else None
+
+    for line in lines:
+        if line == "":
+            if buffer:
+                event = flush()
+                if event is not None:
+                    yield event
+            continue
+        buffer.append(line)
+    if buffer:
+        event = flush()
+        if event is not None:
+            yield event
+
+
+def _assembled_response(events: list[dict[str, object]]) -> _ResponseWithStreamEvents:
+    """从事件流重建最终 output；尤其不能只相信 completed.output。"""
+    completed: dict[str, object] | None = None
+    output_items: dict[int, dict[str, object]] = {}
+    arguments: dict[int, str] = {}
+
+    for event in events:
+        event_type = event.get("type")
+        raw_index = event.get("output_index")
+        index = raw_index if isinstance(raw_index, int) else None
+
+        if event_type == "response.output_item.added" and index is not None:
+            item = event.get("item")
+            if isinstance(item, dict):
+                output_items[index] = dict(item)
+                if item.get("type") == "function_call":
+                    arguments[index] = str(item.get("arguments") or "")
+        elif event_type == "response.function_call_arguments.delta" and index is not None:
+            arguments[index] = arguments.get(index, "") + str(event.get("delta") or "")
+        elif event_type == "response.function_call_arguments.done" and index is not None:
+            arguments[index] = str(event.get("arguments") or "")
+            # 某些流没有 output_item.done；done 事件仍足以补齐名称和参数。
+            item = output_items.setdefault(index, {
+                "type": "function_call",
+                "id": event.get("item_id") or f"fc_{index}",
+                "call_id": event.get("call_id") or event.get("item_id") or f"call_{index}",
+                "status": "completed",
+            })
+            if event.get("name"):
+                item["name"] = event["name"]
+        elif event_type == "response.output_item.done" and index is not None:
+            item = event.get("item")
+            if isinstance(item, dict):
+                output_items[index] = dict(item)
+        elif event_type == "response.completed":
+            response = event.get("response")
+            if isinstance(response, dict):
+                completed = dict(response)
+        elif event_type in {"error", "response.failed", "response.incomplete"}:
+            raise ValueError("Codex 未返回完整结果；本轮输出不会作为报告，请检查网络或重试。")
+
+    if completed is None or completed.get("status") != "completed":
+        raise ValueError("Codex 未返回完整结果；本轮输出不会作为报告，请检查网络或重试。")
+
+    # output_item.done 可能携带空参数；优先采用 arguments.done 或累计的 delta。
+    for index, value in arguments.items():
+        item = output_items.get(index)
+        if item is not None and item.get("type") == "function_call":
+            item["arguments"] = value or str(item.get("arguments") or "{}")
+            item["status"] = "completed"
+
+    completed_output = completed.get("output")
+    if isinstance(completed_output, list):
+        for index, item in enumerate(completed_output):
+            if index not in output_items and isinstance(item, dict):
+                output_items[index] = dict(item)
+    if output_items:
+        completed["output"] = [output_items[index] for index in sorted(output_items)]
+
+    return _ResponseWithStreamEvents(completed, events)
+
+
 class CodexClient:
     """保持 client.responses.create 接口，让推理和 search_web 共用适配。"""
 
@@ -80,7 +227,7 @@ class CodexClient:
 
     def create(self, **kwargs):
         token = get_credentials()
-        body = dict(kwargs)
+        body = _jsonable(dict(kwargs))
         # Codex 端点不接受普通 API 的这两个上限字段。
         body.pop("max_output_tokens", None)
         body.pop("max_tool_calls", None)
@@ -89,20 +236,19 @@ class CodexClient:
         if isinstance(body.get("input"), str):
             body["input"] = [{"role": "user", "content": body["input"]}]
 
+        headers = {
+            "Authorization": f"Bearer {token.access}",
+            "chatgpt-account-id": token.account_id,
+            "OpenAI-Beta": "responses=experimental",
+            "originator": "gold-analyst",
+            "accept": "text/event-stream",
+            "content-type": "application/json",
+        }
         # 地址固定，避免把 ChatGPT OAuth 凭据发往用户配置的 API 代理。
-        with OpenAI(
-            api_key=token.access,
-            base_url="https://chatgpt.com/backend-api/codex",
-            default_headers={"chatgpt-account-id": token.account_id,
-                             "OpenAI-Beta": "responses=experimental", "originator": "gold-analyst"},
-            timeout=90, max_retries=1,
-        ) as client:
-            with client.responses.create(**body) as stream:
-                for event in stream:
-                    if event.type == "response.completed":
-                        if event.response.status != "completed":
-                            break
-                        return event.response
-                    if event.type in {"error", "response.failed", "response.incomplete"}:
-                        break
-        raise ValueError("Codex 未返回完整结果；本轮输出不会作为报告，请检查网络或重试。")
+        with httpx.Client(timeout=90, follow_redirects=True, trust_env=True) as client:
+            with client.stream("POST", _CODEX_URL, headers=headers, json=body) as response:
+                if response.status_code != 200:
+                    response.read()
+                    raise ValueError(f"Codex 请求失败（HTTP {response.status_code}），请重新登录或稍后重试。")
+                events = list(_events_from_lines(response.iter_lines()))
+        return _assembled_response(events)

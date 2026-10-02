@@ -26,6 +26,11 @@ python3 main.py --demo
 
 结果保存在 `reports/` 的 JSON 和 Markdown 中。报告可在网页里下载，重启后也可查看最近记录。
 
+每次真实模型调用会保存为 `.local/runs/<run_id>/messages/001.json`：其中 `agent` 是
+发给模型的完整 instructions、上下文、工具 schema 与 tool choice；`llm_raw_response` 是
+SDK Response 的完整 JSON；`llm_parsed` 是 Agent 实际使用的工具调用和 token。最终的
+`run.json`、`report.json` 和 `report.md` 也保存在同一个 UUID 目录。`.local/` 已被 Git 忽略。
+
 ## 使用 Codex 登录（无需 OpenAI API Key）
 
 这是参考 Vibe-Trading 的实验性 OAuth/Responses 适配，不是普通 API Key 换地址。
@@ -123,7 +128,7 @@ GOLD_MODEL=gpt-4.1-mini
 - 输入/输出 tokens、工具次数、搜索次数、耗时。
 - 最近调查与 Markdown 下载。
 
-联网会把输入和已抓取的公开资料发送到配置的 OpenAI 服务，会产生模型与搜索费用。每次最多 6 轮正常调查、12 次研究工具调用；同一轮的独立工具最多用 4 个线程并行执行，其中联网搜索最多 5 次。另有一次收尾和一次审核请求。这些是调用限制，不是精确人民币预算。
+联网会把输入和已抓取的公开资料发送到配置的模型服务，会使用相应账户额度。每次最多 8 轮正常调查、18 次研究工具调用；同一轮的独立工具最多用 4 个线程并行执行，其中联网搜索最多 5 次。另有一次收尾和一次审核请求。Multi-Agent 中每名研究员各自拥有这份预算。这些是调用上限，不代表每次都会用满。
 
 ## 第一版工具
 

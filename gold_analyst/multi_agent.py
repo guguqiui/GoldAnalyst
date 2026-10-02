@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from .agent import investigate, safe_error
 from .config import settings
 from .llm import create_llm
+from .local_state import save_llm_turn
 from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import JUDGE, STRATEGIES
 from .progress import activity
@@ -106,6 +107,7 @@ def investigate_multi(
     for item in candidates:
         for key in run["usage"]:
             run["usage"][key] += item["usage"][key]
+        run.setdefault("message_files", []).extend(item.get("message_files", []))
 
     emit("裁判 Agent", f"合并 {len(successful)} 份候选报告，并对 {len(evidence)} 条去重证据进行裁决")
     tools = create_tool_registry(run, emit, client, cfg["model"])
@@ -118,6 +120,18 @@ def investigate_multi(
             [report_tool.schema()],
             {"type": "function", "name": "submit_report"},
         )
+    calls_for_trace = [{"name": call.name, "arguments": call.arguments} for call in response.tool_calls]
+    if client is None:
+        try:
+            request = {"instructions": JUDGE, "input": [{"role": "user", "content": judge_input}],
+                       "tools": [report_tool.schema()],
+                       "tool_choice": {"type": "function", "name": "submit_report"}}
+            path = save_llm_turn(run["id"], 1, "裁判轮", cfg["model"], request, response)
+            run.setdefault("message_files", []).append(path)
+        except (OSError, ValueError) as exc:
+            emit("本地记录受阻", f"裁判模型返回未能写入隐藏目录：{safe_error(exc)}")
+    emit("模型结果", "裁判轮选择：" + "、".join(item["name"] for item in calls_for_trace),
+         {"tool_calls": calls_for_trace})
     run["usage"]["input_tokens"] += response.input_tokens
     run["usage"]["output_tokens"] += response.output_tokens
     calls = [call for call in response.tool_calls if call.name == "submit_report"]

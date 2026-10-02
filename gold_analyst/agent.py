@@ -11,6 +11,7 @@ from typing import cast
 
 from .config import settings
 from .llm import ModelResponse, ToolCall, ToolChoice, create_llm
+from .local_state import save_llm_turn
 from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import SYSTEM, REVIEW, STRATEGIES
 from .progress import activity
@@ -43,6 +44,7 @@ def investigate(
     review: bool = True,
 ) -> RunState:
     cfg = settings()
+    persist_llm_trace = client is None
     llm = create_llm(cfg, client)
     strategy = STRATEGIES[run["strategy"]]
     run["model"] = cfg["model"]
@@ -53,22 +55,44 @@ def investigate(
     started = time.monotonic()
     report_tool = tools.get("submit_report")
 
+    def emit_model_result(label: str, result: ModelResponse) -> None:
+        """展示模型可观察的决定，不伪装成或泄露模型隐藏思维过程。"""
+        calls = [{"name": call.name, "arguments": call.arguments} for call in result.tool_calls]
+        if calls:
+            names = "、".join(call["name"] for call in calls)
+            emit("模型结果", f"{label}选择：{names}", {"tool_calls": calls})
+        else:
+            emit("模型结果", f"{label}没有返回工具调用", {"tool_calls": []})
+
     def respond(
+        label: str,
+        activity_stage: str,
+        activity_message: str,
         instructions: str,
         inputs: list[object],
         tool_schemas: list[dict[str, object]],
         choice: ToolChoice = "auto",
     ) -> ModelResponse:
-        with activity(emit, "模型", "等待模型选择工具或整理结论"):
+        request = {"instructions": instructions, "input": inputs,
+                   "tools": tool_schemas, "tool_choice": choice}
+        with activity(emit, activity_stage, activity_message):
             result = llm.respond(instructions, inputs, tool_schemas, choice)
         run["usage"]["input_tokens"] += result.input_tokens
         run["usage"]["output_tokens"] += result.output_tokens
+        if persist_llm_trace:
+            try:
+                sequence = len(run.setdefault("message_files", [])) + 1
+                path = save_llm_turn(run["id"], sequence, label, cfg["model"], request, result)
+                run["message_files"].append(path)
+            except (OSError, ValueError) as exc:
+                emit("本地记录受阻", f"本轮模型返回未能写入隐藏目录：{safe_error(exc)}")
+        emit_model_result(label, result)
         return result
 
     def execute_research(index: int, call: ToolCall, tool: Tool) -> tuple[int, object]:
         """在线程中执行一个研究工具；异常转换成模型可读的工具结果。"""
         try:
-            with activity(emit, "工具", call.name, call.arguments):
+            with activity(emit, "调用工具", call.name, call.arguments):
                 output = tool.execute(**call.arguments)
             return index, output
         except Exception as exc:
@@ -76,7 +100,7 @@ def investigate(
             emit("工具受阻", output["error"])
             return index, output
 
-    # 前六轮允许模型一次选择多个研究工具；第七轮只允许提交报告。
+    # 前 budget.rounds 轮允许选择研究工具；最后一轮只允许提交报告。
     for round_number in range(budget.rounds + 1):
         finalize = (
             round_number == budget.rounds
@@ -85,7 +109,10 @@ def investigate(
         )
         emit("调查员", "整理现有证据并提交报告" if finalize else f"第 {round_number + 1} 轮：选择下一步调查")
         active_schemas = [report_tool.schema()] if finalize else tools.schemas()
-        response = respond(SYSTEM + "\n调查策略：" + strategy["instruction"], messages, active_schemas,
+        phase = "生成报告" if finalize else "推理"
+        phase_message = "根据现有证据组织结构化报告" if finalize else f"第 {round_number + 1} 轮：分析证据并规划下一步"
+        response = respond(f"第 {round_number + 1} 轮", phase, phase_message,
+                           SYSTEM + "\n调查策略：" + strategy["instruction"], messages, active_schemas,
                            {"type": "function", "name": "submit_report"} if finalize else "auto")
         messages.extend(response.history_items)
         calls = response.tool_calls
@@ -161,7 +188,8 @@ def investigate(
     # 独立上下文：只看原始任务、证据与初稿，不继承调查员过程。
     review_input = json.dumps({"task": run["input"], "draft": draft, "evidence": run["evidence"]}, ensure_ascii=False)
     try:
-        response = respond(REVIEW, [{"role": "user", "content": review_input}], [report_tool.schema()],
+        response = respond("审核轮", "审核", "独立核对证据、口径和报告结论",
+                           REVIEW, [{"role": "user", "content": review_input}], [report_tool.schema()],
                            {"type": "function", "name": "submit_report"})
         calls = [x for x in response.tool_calls if x.name == "submit_report"]
         if not calls:

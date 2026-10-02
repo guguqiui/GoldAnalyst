@@ -1,4 +1,4 @@
-"""无需账号/联网：用真实 SDK + 模拟 HTTP 流测试 Codex 协议适配。"""
+"""无需账号/联网：用模拟 HTTP 流测试 Codex 协议适配。"""
 import base64
 import json
 import os
@@ -10,8 +10,6 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 import httpx
-from openai import OpenAI
-
 from gold_analyst.codex import CodexClient, CodexLoginError, get_credentials, has_login, token_storage
 from gold_analyst.agent import investigate
 from gold_analyst.config import public_settings, settings
@@ -19,6 +17,8 @@ from gold_analyst.llm import create_llm
 from gold_analyst.progress import activity
 from gold_analyst.server import new_run
 from gold_analyst.tools import create_tool_registry
+
+REAL_HTTPX_CLIENT = httpx.Client
 
 
 class CodexTests(unittest.TestCase):
@@ -30,24 +30,44 @@ class CodexTests(unittest.TestCase):
         self.event_type = "response.completed"
         self.status = "completed"
         self.output_queue = []
+        self.split_stream_output = ""
 
         def handle(request):
             self.requests.append(request)
+            output = self.output_queue.pop(0) if self.output_queue else self.output
             result = {"id": "resp_1", "object": "response", "created_at": 0,
-                      "status": self.status, "model": "gpt-5.5", "output": self.output_queue.pop(0) if self.output_queue else self.output,
+                      "status": self.status, "model": "gpt-5.5", "output": [] if self.split_stream_output else output,
                       "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}}
-            event = {"type": self.event_type, "response": result, "sequence_number": 1}
+            event = {"type": self.event_type, "response": result, "sequence_number": len(output) + 1}
             data = 'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+            if self.split_stream_output == "done":
+                for index, item in enumerate(output):
+                    done = {"type": "response.output_item.done", "output_index": index,
+                            "item": item, "sequence_number": index + 1}
+                    data += "data: " + json.dumps(done) + "\n\n"
+            if self.split_stream_output == "arguments":
+                for index, item in enumerate(output):
+                    added_item = {**item, "arguments": "", "status": "in_progress"}
+                    added = {"type": "response.output_item.added", "output_index": index,
+                             "item": added_item, "sequence_number": index * 3 + 1}
+                    delta = {"type": "response.function_call_arguments.delta", "output_index": index,
+                             "item_id": item["id"], "delta": item["arguments"],
+                             "sequence_number": index * 3 + 2}
+                    arguments_done = {"type": "response.function_call_arguments.done", "output_index": index,
+                                      "item_id": item["id"], "name": item["name"],
+                                      "arguments": item["arguments"], "sequence_number": index * 3 + 3}
+                    for stream_event in (added, delta, arguments_done):
+                        data += "data: " + json.dumps(stream_event) + "\n\n"
             if self.event_type:
                 data += "data: " + json.dumps(event) + "\n\n"
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=data)
 
         def client_factory(**kwargs):
-            kwargs["http_client"] = httpx.Client(transport=httpx.MockTransport(handle))
-            return OpenAI(**kwargs)
+            kwargs["transport"] = httpx.MockTransport(handle)
+            return REAL_HTTPX_CLIENT(**kwargs)
 
         self.token_patch = patch("gold_analyst.codex.get_credentials", return_value=NS(access="test-token", account_id="test-account"))
-        self.client_patch = patch("gold_analyst.codex.OpenAI", side_effect=client_factory)
+        self.client_patch = patch("gold_analyst.codex.httpx.Client", side_effect=client_factory)
         self.token_patch.start()
         self.client_patch.start()
         self.addCleanup(self.token_patch.stop)
@@ -59,6 +79,7 @@ class CodexTests(unittest.TestCase):
         self.assertEqual(result.tool_calls[0].name, "calculate_change")
         self.assertEqual(result.tool_calls[0].arguments["current"], "620")
         self.assertEqual(result.input_tokens, 10)
+        self.assertGreater(len(result.raw_response.model_dump()["stream_events"]), 1)
         request = self.requests[0]
         body = json.loads(request.content)
         self.assertEqual(str(request.url), "https://chatgpt.com/backend-api/codex/responses")
@@ -67,6 +88,22 @@ class CodexTests(unittest.TestCase):
         self.assertFalse(body["store"])
         self.assertNotIn("max_output_tokens", body)
         self.assertIn("reasoning.encrypted_content", body["include"])
+
+    def test_rebuilds_tool_calls_when_completed_event_has_empty_output(self):
+        self.split_stream_output = "done"
+        llm = create_llm({"provider": "codex", "model": "gpt-5.5", "api_key": "unused"})
+        result = llm.respond("research", [{"role": "user", "content": "test"}], [], "auto")
+        self.assertEqual(len(result.history_items), 1)
+        self.assertEqual(result.tool_calls[0].name, "calculate_change")
+        self.assertEqual(result.raw_response.output[0].call_id, "call_1")
+
+    def test_rebuilds_tool_call_without_output_item_done_like_vt(self):
+        self.split_stream_output = "arguments"
+        llm = create_llm({"provider": "codex", "model": "gpt-5.5", "api_key": "unused"})
+        result = llm.respond("research", [{"role": "user", "content": "test"}], [], "auto")
+        self.assertEqual(len(result.history_items), 1)
+        self.assertEqual(result.tool_calls[0].name, "calculate_change")
+        self.assertEqual(result.tool_calls[0].arguments, {"current": "620", "previous": "610"})
 
     def test_search_uses_same_codex_client_and_keeps_citations(self):
         self.output = [{"type": "message", "id": "msg1", "role": "assistant", "status": "completed",
@@ -97,7 +134,10 @@ class CodexTests(unittest.TestCase):
         self.output_queue = [self.output, [submit], [submit]]
         cfg = {"provider": "codex", "model": "gpt-5.5", "api_key": ""}
         events = []
-        with patch("gold_analyst.agent.settings", return_value=cfg):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch("gold_analyst.agent.settings", return_value=cfg), \
+             patch("gold_analyst.local_state.LOCAL_ROOT", Path(directory) / ".local"), \
+             patch("gold_analyst.local_state.ROOT", Path(directory)):
             run = investigate(new_run("live", "核验涨幅", "source_first"), lambda *args: events.append(args))
         self.assertEqual(run["report"]["title"], "模拟核验")
         self.assertEqual(run["usage"]["tool_calls"], 1)

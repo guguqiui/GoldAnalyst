@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from gold_analyst.agent import investigate, safe_error
 from gold_analyst.demo import demonstrate
-from gold_analyst.models import ResearchBudget
+from gold_analyst.models import DEFAULT_RESEARCH_BUDGET, ResearchBudget
 from gold_analyst.multi_agent import investigate_multi, merge_candidates
 from gold_analyst.server import new_run
 from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
@@ -145,7 +145,7 @@ class AgentTests(unittest.TestCase):
     def test_parallel_batch_respects_total_tool_budget(self):
         batch = [
             call("calculate_change", {"current": str(620 + index), "previous": "610"}, index)
-            for index in range(1, 14)
+            for index in range(1, DEFAULT_RESEARCH_BUDGET.tool_calls + 2)
         ]
         client = FakeClient([
             response(*batch),
@@ -158,9 +158,9 @@ class AgentTests(unittest.TestCase):
             item for item in client.requests[1]["input"]
             if isinstance(item, dict) and item.get("type") == "function_call_output"
         ]
-        self.assertEqual(run["usage"]["tool_calls"], 12)
-        self.assertEqual(len(run["evidence"]), 12)
-        self.assertEqual(len(outputs), 13)
+        self.assertEqual(run["usage"]["tool_calls"], DEFAULT_RESEARCH_BUDGET.tool_calls)
+        self.assertEqual(len(run["evidence"]), DEFAULT_RESEARCH_BUDGET.tool_calls)
+        self.assertEqual(len(outputs), DEFAULT_RESEARCH_BUDGET.tool_calls + 1)
         self.assertIn("总预算已用尽", outputs[-1]["output"])
         self.assertEqual(client.requests[1]["tool_choice"], {"type": "function", "name": "submit_report"})
 
@@ -191,9 +191,18 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(run["review_status"], "未审核初稿")
 
     def test_final_round_forces_submission(self):
-        client = FakeClient([response()] * 6 + [response(call("submit_report", report([]))), response(call("submit_report", report([])))])
-        investigate(new_run("live", "未知", "counter_first"), lambda *a: None, client)
-        self.assertEqual(client.requests[6]["tool_choice"], {"type": "function", "name": "submit_report"})
+        client = FakeClient(
+            [response()] * DEFAULT_RESEARCH_BUDGET.rounds
+            + [response(call("submit_report", report([]))), response(call("submit_report", report([])))]
+        )
+        events = []
+        investigate(new_run("live", "未知", "counter_first"), lambda *args: events.append(args), client)
+        final_index = DEFAULT_RESEARCH_BUDGET.rounds
+        self.assertEqual(client.requests[final_index]["tool_choice"],
+                         {"type": "function", "name": "submit_report"})
+        model_results = [event for event in events if event[0] == "模型结果"]
+        self.assertEqual(len(model_results), DEFAULT_RESEARCH_BUDGET.rounds + 2)
+        self.assertEqual(model_results[final_index][2]["tool_calls"][0]["name"], "submit_report")
 
 
 class MultiAgentTests(unittest.TestCase):

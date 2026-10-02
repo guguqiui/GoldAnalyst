@@ -20,7 +20,7 @@ function setMode(next) {
   $('task').disabled = mode === 'demo'; $('strategy').disabled = mode !== 'live';
   $('start').innerHTML = (mode === 'demo' ? '运行教学演示' : mode === 'multi' ? '开始协作调查' : '开始联网调查') + ' <span>→</span>';
   $('mode-note').textContent = mode === 'demo' ? '免 Key · 虚构资料 · 固定流程，先看一遍完整效果。' : mode === 'multi' ? '三个独立研究员并行调查，由裁判 Agent 对证据和冲突进行合并。' : 'OpenAI 自主调用工具，调查员完成后交由审核员检查。';
-  $('budget').textContent = mode === 'demo' ? '演示不调用模型、不消耗额度。' : mode === 'multi' ? '三名研究员各自拥有独立预算，消耗更多模型额度。' : '最多 12 次研究工具调用、5 次搜索请求。使用所选服务的模型额度。';
+  $('budget').textContent = mode === 'demo' ? '演示不调用模型、不消耗额度。' : mode === 'multi' ? '三名研究员各有 8 轮、18 次工具预算，消耗明显高于单调查员。' : '最多 8 轮、18 次研究工具调用、5 次搜索请求。使用所选服务的模型额度。';
   $('form-error').classList.add('hidden');
 }
 $('demo-mode').onclick = () => setMode('demo'); $('live-mode').onclick = () => setMode('live'); $('multi-mode').onclick = () => setMode('multi');
@@ -82,7 +82,8 @@ function render(run) {
     const links = (e.citations || []).filter(c => safeURL(c.url)).map(c => `<li><a href="${esc(safeURL(c.url))}" target="_blank" rel="noopener noreferrer">${esc(c.title || c.url)}</a></li>`).join('');
     return `<details class="source" id="source-${esc(e.id)}"><summary><strong>${esc(e.id)}</strong><span>${esc(e.title)}</span></summary><p class="fine">获取时间：${esc(e.retrieved_at)}${e.published_at ? ' · 资料发布时间：' + esc(e.published_at) : ''}</p>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">查看原始来源 ↗</a>` : '<p class="fine">本地计算或虚构教学材料</p>'}<pre>${esc(e.text)}</pre>${links ? '<ul>' + links + '</ul>' : ''}</details>`;
   }).join('') || '<p class="hint">尚未取得资料；失败的请求不会生成证据卡。</p>';
-  $('usage').textContent = `输入 ${run.usage.input_tokens} / 输出 ${run.usage.output_tokens} tokens · ${run.usage.search_requests} 次搜索请求 · ${run.review_status || '等待审核'} · 本地保存 JSON 与 Markdown`;
+  const trace = run.message_files?.length ? ` · ${run.message_files.length} 轮完整消息已保存到 .local/runs/${run.id}/messages` : '';
+  $('usage').textContent = `输入 ${run.usage.input_tokens} / 输出 ${run.usage.output_tokens} tokens · ${run.usage.search_requests} 次搜索请求 · ${run.review_status || '等待审核'} · 本地保存 JSON 与 Markdown${trace}`;
 }
 document.addEventListener('click', e => { const a = e.target.closest('a.ref'); if(a) { const el = document.querySelector(a.getAttribute('href')); if(el) el.open = true; } });
 $('investigation').onsubmit = async (event) => {
