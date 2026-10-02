@@ -4,9 +4,30 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from _thread import LockType
 from threading import Lock
+import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..models import RunState
 from ..storage import now
+
+
+def canonical_url(url: str) -> str:
+    """忽略 fragment、尾部斜线和跟踪参数，识别同一个网页。"""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    query = urlencode(sorted(
+        (key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+    ))
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), query, ""))
+
+
+def urls_in_text(text: str) -> set[str]:
+    """提取用户明确给出的 URL；它们是待核验材料，不是独立核验证据。"""
+    matches = re.findall(r"https?://[^\s<>\"'\u3000\u4e00-\u9fff]+", text)
+    return {canonical_url(url.rstrip(".,;:!?，。；：！？)]}）】")) for url in matches}
 
 
 @dataclass
@@ -19,6 +40,9 @@ class ToolContext:
     model: str | None = None
     cache: dict[str, object] = field(default_factory=dict)
     lock: LockType = field(default_factory=Lock, repr=False)
+
+    def is_target_url(self, url: str) -> bool:
+        return bool(url) and canonical_url(url) in urls_in_text(self.run.get("input", ""))
 
     def add_evidence(
         self,

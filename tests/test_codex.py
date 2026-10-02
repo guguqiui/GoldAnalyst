@@ -119,6 +119,20 @@ class CodexTests(unittest.TestCase):
         self.assertNotIn("max_tool_calls", body)
         self.assertEqual(body["tools"], [{"type": "web_search"}])
 
+    def test_search_filters_the_target_link_from_citations(self):
+        self.output = [{"type": "message", "id": "msg1", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": "摘要", "annotations": [
+                            {"type": "url_citation", "url": "https://example.com/article", "title": "待核验原文",
+                             "start_index": 0, "end_index": 1},
+                            {"type": "url_citation", "url": "https://official.example/report", "title": "独立来源",
+                             "start_index": 1, "end_index": 2}]}]}]
+        run = new_run("live", "核验 https://example.com/article", "source_first")
+        registry = create_tool_registry(run, lambda *a: None, CodexClient(), "gpt-5.5")
+        result = registry.get("search_web").execute("核验文章中的黄金说法")
+        self.assertEqual(result["evidence"]["citations"], [
+            {"title": "独立来源", "url": "https://official.example/report"}
+        ])
+
     def test_incomplete_or_missing_completion_is_rejected(self):
         for event in ("response.incomplete", "response.failed", ""):
             self.event_type = event

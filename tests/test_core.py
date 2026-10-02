@@ -249,6 +249,12 @@ class MultiAgentTests(unittest.TestCase):
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_search_rejects_the_target_url_as_query(self):
+        target = "https://example.com/article?a=1&utm_source=test"
+        registry = create_tool_registry(new_run("live", target, "source_first"), lambda *a: None)
+        with self.assertRaisesRegex(ValueError, "待核验链接不能作为搜索查询"):
+            registry.get("search_web").execute("请搜索 https://example.com/article?a=1")
+
     def test_registry_binds_all_tools(self):
         registry = create_tool_registry(new_run("demo", "", "source_first"), lambda *a: None)
         self.assertEqual(
