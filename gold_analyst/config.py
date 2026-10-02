@@ -11,14 +11,21 @@ def settings():
         load_dotenv(ROOT / ".env", override=False)
     except ImportError:
         pass  # 离线演示不需要安装依赖。
+    provider = os.getenv("GOLD_PROVIDER", "openai")
     return {
+        "provider": provider,
         "api_key": os.getenv("OPENAI_API_KEY", ""),
         "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        "model": os.getenv("GOLD_MODEL", "gpt-4.1-mini"),
+        "model": os.getenv("GOLD_CODEX_MODEL", "gpt-5.5") if provider == "codex" else os.getenv("GOLD_MODEL", "gpt-4.1-mini"),
     }
 
 
 def public_settings():
     cfg = settings()
-    return {"model_ready": bool(cfg["api_key"] and cfg["base_url"] and cfg["model"]),
-            "model": cfg["model"], "search_ready": bool(cfg["api_key"])}
+    if cfg["provider"] == "codex":
+        from .codex import has_login
+        ready = has_login() and bool(cfg["model"])
+    else:
+        ready = cfg["provider"] == "openai" and bool(cfg["api_key"] and cfg["base_url"] and cfg["model"])
+    return {"model_ready": ready, "provider": cfg["provider"],
+            "model": cfg["model"], "search_ready": ready}

@@ -18,7 +18,10 @@
 <p class="fine" id="budget">演示不调用模型、不消耗 API 额度。</p>
 <div id="form-error" class="error hidden" role="alert"></div>
 </form>
-<details class="panel setup"><summary>连接你的 OpenAI Key <span>＋</span></summary><ol><li>打开项目中的 <code>.env</code> 文件。</li><li>填写 <code>OPENAI_API_KEY</code>。</li><li>保存后重启服务，再选“联网调查”。</li></ol><p class="fine">默认模型 gpt-4.1-mini，可在 .env 修改。Key 只在本地文件中保存；联网调查会将输入和检索资料发送到所配置的模型服务。</p></details>
+<details class="panel setup"><summary>连接 Codex / OpenAI API <span>＋</span></summary>
+<p class="fine">Codex 模式：在项目终端运行 <code>uv run python main.py --login-codex</code>，完成浏览器登录后，用 <code>uv run python main.py --provider codex</code> 启动。</p>
+<p class="fine">API 模式：在本地 <code>.env</code> 配置 <code>OPENAI_API_KEY</code>，用 <code>--provider openai</code> 启动。</p>
+<p class="fine">登录信息不显示在页面。联网调查会将输入和检索资料发送到所选模型服务；账户权限、额度与搜索可用性需实际调用确认。</p></details>
 <section class="panel history"><div class="section-label">最近的调查</div><div id="history"><p class="hint">完成第一条调查后，这里会留下记录。</p></div></section>
 </aside>
 <section class="results" aria-live="polite">

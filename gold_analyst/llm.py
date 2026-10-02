@@ -87,10 +87,17 @@ class ResponsesLLM:
 def create_llm(config: dict[str, str], client: object | None = None) -> ResponsesLLM:
     """创建正式客户端；测试可以传入实现相同接口的假客户端。"""
     if client is None:
-        client = OpenAI(
-            api_key=config["api_key"],
-            base_url=config["base_url"],
-            timeout=45,
-            max_retries=0,
-        )
+        provider = config.get("provider", "openai")
+        if provider == "codex":
+            from .codex import CodexClient
+            client = CodexClient()
+        elif provider == "openai":
+            if not config["api_key"]:
+                raise ValueError("请配置 OPENAI_API_KEY，或使用 --provider codex 并完成登录。")
+            client = OpenAI(
+                api_key=config["api_key"], base_url=config["base_url"],
+                timeout=90, max_retries=2,
+            )
+        else:
+            raise ValueError("GOLD_PROVIDER 仅支持 openai 或 codex。")
     return ResponsesLLM(cast(OpenAI, client), config["model"])

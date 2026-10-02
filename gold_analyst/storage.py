@@ -34,8 +34,17 @@ def markdown(run):
     return "\n".join(lines)
 
 
-def save_run(run):
+def report_folder(run):
     folder = ROOT / "reports"
-    folder.mkdir(exist_ok=True)
-    (folder / f"{run['id']}.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
+    if run.get("artifact_group") == "seed":
+        folder /= "seed"
+    return folder
+
+
+def save_run(run):
+    folder = report_folder(run)
+    folder.mkdir(parents=True, exist_ok=True)
+    json_path = folder / f"{run['id']}.json"
+    json_path.write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
     (folder / f"{run['id']}.md").write_text(markdown(run), encoding="utf-8")
+    return json_path

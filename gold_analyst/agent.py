@@ -13,17 +13,18 @@ from .config import settings
 from .llm import ModelResponse, ToolCall, ToolChoice, create_llm
 from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import SYSTEM, REVIEW, STRATEGIES
+from .progress import activity
 from .tools import Tool, create_tool_registry
 
 
 def safe_error(exc: Exception) -> str:
     """不把 SDK 错误中的请求头或密钥输出到网页/报告。"""
     name = type(exc).__name__
-    messages = {"AuthenticationError": "OpenAI Key 无效，请检查本地 .env。",
+    messages = {"AuthenticationError": "模型认证失败：API 模式检查 Key；Codex 模式重新运行 --login-codex。",
                 "RateLimitError": "OpenAI 额度不足或请求受限，请检查账户额度后重试。",
                 "APIConnectionError": "无法连接 OpenAI，请检查网络或 OPENAI_BASE_URL。",
                 "APITimeoutError": "OpenAI 请求超时，可稍后重试。",
-                "NotFoundError": "模型或 API 路径不可用，请检查 GOLD_MODEL 与服务地址。",
+                "NotFoundError": "模型或 API 路径不可用，请检查 GOLD_MODEL / GOLD_CODEX_MODEL 与服务地址。",
                 "BadRequestError": "模型不支持当前 Responses/工具参数，请检查模型与接口配置。"}
     if name in messages:
         return messages[name]
@@ -42,14 +43,11 @@ def investigate(
     review: bool = True,
 ) -> RunState:
     cfg = settings()
-    if client is None:
-        if not cfg["api_key"]:
-            raise ValueError("请先在本地 .env 填写 OPENAI_API_KEY，或选择免 Key 教学演示。")
     llm = create_llm(cfg, client)
     strategy = STRATEGIES[run["strategy"]]
     run["model"] = cfg["model"]
     run["strategy_version"] = strategy["version"]
-    tools = create_tool_registry(run, emit, client, cfg["model"])
+    tools = create_tool_registry(run, emit, llm.client, cfg["model"])
     messages: list[object] = [{"role": "user", "content": run["input"]}]
     draft: dict[str, object] | None = None
     started = time.monotonic()
@@ -61,7 +59,8 @@ def investigate(
         tool_schemas: list[dict[str, object]],
         choice: ToolChoice = "auto",
     ) -> ModelResponse:
-        result = llm.respond(instructions, inputs, tool_schemas, choice)
+        with activity(emit, "模型", "等待模型选择工具或整理结论"):
+            result = llm.respond(instructions, inputs, tool_schemas, choice)
         run["usage"]["input_tokens"] += result.input_tokens
         run["usage"]["output_tokens"] += result.output_tokens
         return result
@@ -69,9 +68,8 @@ def investigate(
     def execute_research(index: int, call: ToolCall, tool: Tool) -> tuple[int, object]:
         """在线程中执行一个研究工具；异常转换成模型可读的工具结果。"""
         try:
-            emit("调用工具", call.name, call.arguments)
-            output = tool.execute(**call.arguments)
-            emit("工具完成", call.name)
+            with activity(emit, "工具", call.name, call.arguments):
+                output = tool.execute(**call.arguments)
             return index, output
         except Exception as exc:
             output = {"error": safe_error(exc)}

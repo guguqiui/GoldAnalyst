@@ -20,7 +20,7 @@ function setMode(next) {
   $('task').disabled = mode === 'demo'; $('strategy').disabled = mode !== 'live';
   $('start').innerHTML = (mode === 'demo' ? '运行教学演示' : mode === 'multi' ? '开始协作调查' : '开始联网调查') + ' <span>→</span>';
   $('mode-note').textContent = mode === 'demo' ? '免 Key · 虚构资料 · 固定流程，先看一遍完整效果。' : mode === 'multi' ? '三个独立研究员并行调查，由裁判 Agent 对证据和冲突进行合并。' : 'OpenAI 自主调用工具，调查员完成后交由审核员检查。';
-  $('budget').textContent = mode === 'demo' ? '演示不调用模型、不消耗 API 额度。' : mode === 'multi' ? '三名研究员各自拥有独立预算，API 消耗约为单调查模式的三倍以上。' : '最多 12 次研究工具调用、5 次搜索请求。联网与模型调用会消耗 API 额度。';
+  $('budget').textContent = mode === 'demo' ? '演示不调用模型、不消耗额度。' : mode === 'multi' ? '三名研究员各自拥有独立预算，消耗更多模型额度。' : '最多 12 次研究工具调用、5 次搜索请求。使用所选服务的模型额度。';
   $('form-error').classList.add('hidden');
 }
 $('demo-mode').onclick = () => setMode('demo'); $('live-mode').onclick = () => setMode('live'); $('multi-mode').onclick = () => setMode('multi');
@@ -38,6 +38,23 @@ async function history() {
   }
 }
 function showError(text) { $('form-error').textContent = text; $('form-error').classList.remove('hidden'); }
+function renderEvents(events, runStatus) {
+  // 同一步的开始/结束事件合并为一行；并行工具各有独立 ID。
+  const rows = [], positions = new Map();
+  for (const event of events) {
+    const id = event.details?.activity_id;
+    if (id && positions.has(id)) rows[positions.get(id)] = event;
+    else { if (id) positions.set(id, rows.length); rows.push(event); }
+  }
+  return rows.map(e => {
+    const isActivity = !!e.details?.activity_id;
+    let state = isActivity ? e.details.state : '';
+    if (state === 'running' && runStatus !== 'running') state = 'interrupted';
+    const label = {running:'⏳ 执行中…',completed:'✓ 已完成',failed:'✕ 失败',interrupted:'已中断'}[state] || '';
+    const details = isActivity ? e.details.arguments : e.details;
+    return `<li><b>${esc(e.stage)} ${label}</b><span>${esc(e.message)}</span>${details ? `<details><summary>查看工具参数</summary><pre>${esc(JSON.stringify(details,null,2))}</pre></details>`:''}</li>`;
+  }).join('');
+}
 function render(run) {
   $('welcome').classList.add('hidden'); $('run-view').classList.remove('hidden');
   $('run-mode').textContent = run.mode === 'demo' ? 'TEACHING DEMO / 虚构样例' : run.mode === 'multi' ? 'MULTI-AGENT / 协作调查' : 'LIVE INVESTIGATION / 联网调查';
@@ -47,7 +64,7 @@ function render(run) {
   $('run-error').classList.toggle('hidden', !run.error && !run.save_error); $('run-error').textContent = run.error || run.save_error || '';
   $('metric-claims').textContent = run.report?.claims?.length ?? '—'; $('metric-evidence').textContent = run.evidence.length;
   $('metric-tools').textContent = run.usage.tool_calls; $('metric-time').textContent = run.duration_seconds ?? '…';
-  $('events').innerHTML = run.events.map(e => `<li><b>${esc(e.stage)}</b><span>${esc(e.message)}</span>${e.details ? `<details><summary>查看工具参数</summary><pre>${esc(JSON.stringify(e.details,null,2))}</pre></details>`:''}</li>`).join('');
+  $('events').innerHTML = renderEvents(run.events, run.status);
   $('events').scrollTop = $('events').scrollHeight;
   $('report-section').classList.toggle('hidden', !run.report);
   if (run.report) {
@@ -82,7 +99,7 @@ $('investigation').onsubmit = async (event) => {
 };
 async function init() {
   setMode('demo');
-  try { const cfg = await request('/api/config'); $('connection').textContent = cfg.model_ready ? `已配置 · ${cfg.model}` : 'OpenAI Key 待配置'; $('connection').classList.toggle('ready',cfg.model_ready); await history(); }
+  try { const cfg = await request('/api/config'); $('connection').textContent = cfg.model_ready ? `${cfg.provider === 'codex' ? 'Codex 本地登录已保存（连接待验证）' : 'API Key 已配置'} · ${cfg.model}` : (cfg.provider === 'codex' ? 'Codex 待登录' : 'API Key 待配置'); $('connection').classList.toggle('ready',cfg.model_ready); await history(); }
   catch(e) { $('connection').textContent = '本地服务未连接'; showError(e.message); }
 }
 init();

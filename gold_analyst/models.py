@@ -47,3 +47,4 @@ class RunState(TypedDict, total=False):
     duration_seconds: float
     candidates: list[dict[str, object]]
     adjudication: list[dict[str, object]]
+    artifact_group: str

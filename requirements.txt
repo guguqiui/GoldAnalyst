@@ -3,3 +3,4 @@ requests==2.34.2
 openai==2.54.0
 python-dotenv==1.2.3
 pypdf==6.18.1
+oauth-cli-kit==0.1.6

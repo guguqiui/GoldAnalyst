@@ -21,7 +21,7 @@ class SearchWebTool(Tool):
 
     def execute(self, query):
         if self.context.client is None:
-            raise ValueError("联网搜索需要配置 OpenAI API Key")
+            raise ValueError("联网搜索需要可用的模型客户端：API Key 或 Codex 登录。")
         with self.search_lock:
             if self.search_count >= MAX_SEARCH_REQUESTS:
                 raise ValueError(

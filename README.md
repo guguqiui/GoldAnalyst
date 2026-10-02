@@ -26,7 +26,32 @@ python3 main.py --demo
 
 结果保存在 `reports/` 的 JSON 和 Markdown 中。报告可在网页里下载，重启后也可查看最近记录。
 
-## 连接 OpenAI，调查真实新闻
+## 使用 Codex 登录（无需 OpenAI API Key）
+
+这是参考 Vibe-Trading 的实验性 OAuth/Responses 适配，不是普通 API Key 换地址。
+Codex 后端接口及模型/网页搜索的可用性需要真实账号验证，不保证长期兼容。
+它使用 ChatGPT/Codex 的账户权限与额度，并不是无限免费调用。
+
+```bash
+uv sync --locked
+uv run python main.py --login-codex
+uv run python main.py --provider codex
+```
+
+第二条命令需要本人在浏览器中完成登录。凭据仅保存在本项目的 `.local/codex.json`
+（已排除 Git），不会复制 VT 或 `~/.codex/auth.json` 的登录。
+不要分享这个文件，也不要同时启动多个登录流程。
+页面打开 <http://127.0.0.1:8765>，选择“联网调查”。
+默认模型沿用本次 VT 示例的 `gpt-5.5`；可通过 `GOLD_CODEX_MODEL` 指定账号可用的模型。
+`--provider codex` 只对本次启动生效；若要保留，设置 `.env` 的 `GOLD_PROVIDER=codex`。
+
+页面仍每秒轮询一次：模型、工具和裁判显示“执行中 / 已完成 / 失败”，最终报告一次性展示。
+底层 Codex 响应虽然是流式传输，但接入层会等完整响应再交给 Agent；页面不显示逐字输出。
+推理与 `search_web` 共用所选客户端；搜索不可用时保留错误，**不会自动退回付费 API**。
+注意：Codex 不接受原先 `max_output_tokens` 和 `max_tool_calls` 参数，这两个服务端上限
+在 Codex 模式下不生效；Agent 自身的轮数、研究工具次数、搜索请求次数限制仍保留。
+
+## 连接 OpenAI API，调查真实新闻
 
 ### 1. 安装依赖
 
@@ -36,7 +61,7 @@ python3 main.py --demo
 uv sync --locked
 ```
 
-没有 uv，也可以用 Python 3.10+ 的虚拟环境：
+没有 uv，也可以用 Python 3.11+ 的虚拟环境（Codex 登录依赖要求）：
 
 ```bash
 python3 -m venv .venv
@@ -182,6 +207,31 @@ GoldAnalyst/
 ```
 
 测试覆盖计算、缺失/错误引用、新闻不能自证、页面解析、网络目标校验，以及用模拟模型验证的工具往返、独立审核、预算收尾。模拟测试不等于已经调用真实 OpenAI 成功；真实连通性需要你填 Key 后运行。
+
+### 策略评测案例
+
+`evals/` 保存人工审核的黄金事实核验案例、官方资料快照、标准答案和机器评分规则。
+运行 Agent 时只能看到案例的 `task`，不能读取 `oracle`、`checks` 或 fixture。
+
+```bash
+uv run python -m gold_analyst.evaluation validate
+uv run python -m gold_analyst.evaluation score 案例ID reports/运行记录.json
+```
+
+当前评分器不调用模型，先检查 verdict、必要数字与口径、原始来源引用和运行预算。它用于校准
+评测基础设施，还不能替代人工语义审核。评分结果自动保存在 `evals/results/`，不会修改原始
+调查记录。输入与已审核案例完全匹配的命令行调查会在完成后自动评分；历史报告可使用
+`uv run python -m gold_analyst.evaluation backfill` 补评分。
+
+批量运行所有尚未完成的种子案例：
+
+```bash
+uv run python -m gold_analyst.evaluation run-seed --strategy source_first
+```
+
+也可将策略改为 `scope_first`、`counter_first` 或 `all`。批量运行会产生真实 API 调用费用，
+默认跳过已经完成的案例与策略组合。种子评测报告保存在 `reports/seed/`，评分保存在
+`evals/results/seed/`，批次汇总保存在 `evals/results/seed/batches/`，不会与普通调查混在一起。
 
 ## Auto-research 与进化做到哪一步
 

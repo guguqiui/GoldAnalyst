@@ -12,6 +12,7 @@ from .config import settings
 from .llm import create_llm
 from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import JUDGE, STRATEGIES
+from .progress import activity
 from .server_state import blank_run
 from .tools import create_tool_registry
 
@@ -73,8 +74,6 @@ def investigate_multi(
     budget: ResearchBudget = DEFAULT_RESEARCH_BUDGET,
 ) -> RunState:
     cfg = settings()
-    if client is None and not cfg["api_key"]:
-        raise ValueError("请先在本地 .env 填写 OPENAI_API_KEY，或选择免 Key 教学演示。")
 
     strategies = tuple(STRATEGIES)
     emit("编排器", "并行启动来源、口径与反证三个独立研究员")
@@ -112,12 +111,13 @@ def investigate_multi(
     tools = create_tool_registry(run, emit, client, cfg["model"])
     report_tool = tools.get("submit_report")
     judge_input = json.dumps({"task": run["input"], "candidates": summaries, "evidence": evidence}, ensure_ascii=False)
-    response = create_llm(cfg, client).respond(
-        JUDGE,
-        [{"role": "user", "content": judge_input}],
-        [report_tool.schema()],
-        {"type": "function", "name": "submit_report"},
-    )
+    with activity(emit, "裁判 Agent", "检查候选报告并生成最终结论"):
+        response = create_llm(cfg, client).respond(
+            JUDGE,
+            [{"role": "user", "content": judge_input}],
+            [report_tool.schema()],
+            {"type": "function", "name": "submit_report"},
+        )
     run["usage"]["input_tokens"] += response.input_tokens
     run["usage"]["output_tokens"] += response.output_tokens
     calls = [call for call in response.tool_calls if call.name == "submit_report"]

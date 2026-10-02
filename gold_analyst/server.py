@@ -43,7 +43,33 @@ def execute(run):
     finally:
         run["duration_seconds"] = round(time.monotonic() - started, 1)
         try:
-            save_run(run)
+            report_path = save_run(run)
+            if run.get("status") == "completed" and run.get("mode") in {"live", "multi"}:
+                try:
+                    from .evaluation import load_cases, match_case_for_run, save_evaluation, score_run
+
+                    matched_case = match_case_for_run(load_cases(), run)
+                    if matched_case:
+                        result = score_run(matched_case, run)
+                        result_path = save_evaluation(matched_case, run, result, report_path)
+                        run["case_id"] = matched_case.id
+                        run["evaluation"] = {
+                            "valid": result["valid"],
+                            "score": result["score"],
+                            "raw_score": result["raw_score"],
+                            "score_cap": result["score_cap"],
+                            "invalid_reasons": result["invalid_reasons"],
+                            "result_path": str(result_path.relative_to(ROOT)),
+                        }
+                        if result["valid"]:
+                            emit("自动评测", f"案例 {matched_case.id} 得分 {result['score']}/100")
+                        else:
+                            reason = "；".join(result["invalid_reasons"])
+                            emit("自动评测", f"案例 {matched_case.id} 本次运行无效：{reason}")
+                        save_run(run)
+                except (OSError, ValueError) as exc:
+                    run["evaluation_error"] = str(exc)
+                    save_run(run)
         except OSError:
             run["save_error"] = "无法写入 reports 文件夹，请检查磁盘权限。页面仍保留本次结果。"
     return run
@@ -135,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(task, str) or len(task) > 4000 or (mode in {"live", "multi"} and not task.strip()):
                 raise ValueError("请输入新闻链接或不超过 4000 字的待核验说法")
             if mode in {"live", "multi"} and not public_settings()["model_ready"]:
-                raise ValueError("请在本地 .env 配置 OpenAI Key 后重启服务，或先体验教学演示。")
+                raise ValueError("模型尚未配置：Codex 模式先运行 uv run python main.py --login-codex；API 模式配置 Key。也可先体验教学演示。")
             with LOCK:
                 if any(r["status"] == "running" for r in RUNS.values()):
                     return self.send(409, {"error": "已有调查进行中，请等待完成。"})
