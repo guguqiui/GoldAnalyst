@@ -8,6 +8,7 @@ from .finding import SubmitFindingTool
 from .report import SubmitReportTool
 from .search import SearchSourcesTool
 from .sge import SGEDataTool
+from .verification import SubmitVerificationTool
 from .web import ReadURLTool, parse_html, validate_public_url
 
 
@@ -27,9 +28,13 @@ def create_tool_registry(
         CalculateChangeTool(context),
         SearchSourcesTool(context),
         SubmitReportTool(context),
+        SubmitFindingTool(context),
+        SubmitVerificationTool(context),
     ]
     if allowed_names is None:
-        return ToolRegistry(tools)
+        # Single-Agent 保持原工具集合；中间产物工具只能由专业 Agent 显式申请。
+        specialist_outputs = {"submit_finding", "submit_verification"}
+        return ToolRegistry(tool for tool in tools if tool.name not in specialist_outputs)
     allowed = set(allowed_names)
     known = {tool.name for tool in tools}
     unknown = allowed - known
@@ -43,6 +48,7 @@ __all__ = [
     "ToolContext",
     "ToolRegistry",
     "SubmitFindingTool",
+    "SubmitVerificationTool",
     "create_tool_registry",
     "parse_html",
     "validate_public_url",

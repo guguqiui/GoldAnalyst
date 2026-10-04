@@ -43,18 +43,24 @@ def investigate(
     budget: ResearchBudget = DEFAULT_RESEARCH_BUDGET,
     review: bool = True,
     allowed_tools: set[str] | frozenset[str] | None = None,
+    system_instructions: str | None = None,
+    output_tool_name: str = "submit_report",
+    output_key: str = "report",
 ) -> RunState:
     cfg = settings()
     persist_llm_trace = client is None
     llm = create_llm(cfg, client)
     strategy = STRATEGIES[run["strategy"]]
+    instructions = system_instructions or SYSTEM + "\n调查策略：" + strategy["instruction"]
+    if review and output_tool_name != "submit_report":
+        raise ValueError("独立报告审核只支持 submit_report")
     run["model"] = cfg["model"]
     run["strategy_version"] = strategy["version"]
     tools = create_tool_registry(run, emit, llm.client, cfg["model"], allowed_tools)
     messages: list[object] = [{"role": "user", "content": run["input"]}]
     draft: dict[str, object] | None = None
     started = time.monotonic()
-    report_tool = tools.get("submit_report")
+    output_tool = tools.get(output_tool_name)
 
     def emit_model_result(label: str, result: ModelResponse) -> None:
         """展示模型可观察的决定，不伪装成或泄露模型隐藏思维过程。"""
@@ -101,24 +107,24 @@ def investigate(
             emit("工具受阻", output["error"])
             return index, output
 
-    # 前 budget.rounds 轮允许选择研究工具；最后一轮只允许提交报告。
+    # 前 budget.rounds 轮允许选择研究工具；最后一轮只允许提交结构化结果。
     for round_number in range(budget.rounds + 1):
         finalize = (
             round_number == budget.rounds
             or run["usage"]["tool_calls"] >= budget.tool_calls
             or time.monotonic() - started > budget.duration_seconds
         )
-        emit("调查员", "整理现有证据并提交报告" if finalize else f"第 {round_number + 1} 轮：选择下一步调查")
-        active_schemas = [report_tool.schema()] if finalize else tools.schemas()
-        phase = "生成报告" if finalize else "推理"
-        phase_message = "根据现有证据组织结构化报告" if finalize else f"第 {round_number + 1} 轮：分析证据并规划下一步"
+        emit("调查员", "整理现有证据并提交结果" if finalize else f"第 {round_number + 1} 轮：选择下一步调查")
+        active_schemas = [output_tool.schema()] if finalize else tools.schemas()
+        phase = "生成结果" if finalize else "推理"
+        phase_message = "根据现有证据组织结构化结果" if finalize else f"第 {round_number + 1} 轮：分析证据并规划下一步"
         response = respond(f"第 {round_number + 1} 轮", phase, phase_message,
-                           SYSTEM + "\n调查策略：" + strategy["instruction"], messages, active_schemas,
-                           {"type": "function", "name": "submit_report"} if finalize else "auto")
+                           instructions, messages, active_schemas,
+                           {"type": "function", "name": output_tool_name} if finalize else "auto")
         messages.extend(response.history_items)
         calls = response.tool_calls
         if not calls:
-            messages.append({"role": "user", "content": "请调用工具继续调查，或调用 submit_report 提交结构化结果。"})
+            messages.append({"role": "user", "content": f"请调用工具继续调查，或调用 {output_tool_name} 提交结构化结果。"})
             continue
         outputs: dict[int, object] = {}
         resolved: dict[int, Tool] = {}
@@ -135,7 +141,7 @@ def investigate(
                 try:
                     candidate = resolved[index].execute(**calls[index].arguments)
                     if not isinstance(candidate, dict):
-                        raise ValueError("报告工具必须返回对象")
+                        raise ValueError("终止型工具必须返回对象")
                     draft = cast(dict[str, object], candidate)
                     outputs[index] = {"accepted": True}
                 except Exception as exc:
@@ -145,18 +151,18 @@ def investigate(
             else:
                 for index in terminal_indexes:
                     outputs[index] = {
-                        "error": "submit_report 不能与研究工具在同一批调用；请先读取本批结果，下一轮再提交。"
+                        "error": f"{output_tool_name} 不能与研究工具在同一批调用；请先读取本批结果，下一轮再提交。"
                     }
 
         research_indexes = [index for index, tool in resolved.items() if not tool.terminal]
         if finalize:
             for index in research_indexes:
-                outputs[index] = {"error": "调查预算已用尽，请提交报告，未解决事项写入 unresolved。"}
+                outputs[index] = {"error": "调查预算已用尽，请提交结构化结果，未解决事项写入 unresolved。"}
         else:
             remaining = budget.tool_calls - run["usage"]["tool_calls"]
             allowed = research_indexes[:remaining]
             for index in research_indexes[remaining:]:
-                outputs[index] = {"error": "研究工具总预算已用尽，请利用已有结果提交报告。"}
+                outputs[index] = {"error": "研究工具总预算已用尽，请利用已有结果提交结构化结果。"}
             run["usage"]["tool_calls"] += len(allowed)
             if len(allowed) == 1:
                 index = allowed[0]
@@ -176,13 +182,17 @@ def investigate(
         if draft:
             break
     if draft is None:
-        raise ValueError("调查预算内未生成有效报告；已保留过程和证据，请缩小问题后重试。")
+        raise ValueError("调查预算内未生成有效结果；已保留过程和证据，请缩小问题后重试。")
     accepted_draft = draft
 
     if not review:
-        run["report"] = accepted_draft
-        run["review_status"] = "候选报告待裁判审核"
-        run["notice"] = "独立研究员候选报告；最终结论由裁判合并。"
+        run[output_key] = accepted_draft  # type: ignore[literal-required]
+        if output_key == "report":
+            run["review_status"] = "候选报告待裁判审核"
+            run["notice"] = "独立研究员候选报告；最终结论由裁判合并。"
+        else:
+            run["review_status"] = "专业发现待独立核验"
+            run["notice"] = "专业 Agent 中间产物；不能直接作为最终用户结论。"
         return run
 
     emit("审核员", "独立检查证据、口径与结论")
@@ -190,12 +200,12 @@ def investigate(
     review_input = json.dumps({"task": run["input"], "draft": draft, "evidence": run["evidence"]}, ensure_ascii=False)
     try:
         response = respond("审核轮", "审核", "独立核对证据、口径和报告结论",
-                           REVIEW, [{"role": "user", "content": review_input}], [report_tool.schema()],
+                           REVIEW, [{"role": "user", "content": review_input}], [output_tool.schema()],
                            {"type": "function", "name": "submit_report"})
         calls = [x for x in response.tool_calls if x.name == "submit_report"]
         if not calls:
             raise ValueError("审核员没有提交有效报告")
-        report = report_tool.execute(**calls[0].arguments)
+        report = output_tool.execute(**calls[0].arguments)
         if not isinstance(report, dict):
             raise ValueError("报告工具必须返回对象")
         run["review_status"] = "模型审核完成，仍需人工复核"

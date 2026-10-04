@@ -60,4 +60,20 @@ class SubmitFindingTool(Tool):
         unresolved = finding.get("unresolved")
         if not isinstance(facts, list) or not isinstance(unresolved, list):
             raise ValueError("facts 和 unresolved 必须是数组")
+
+        # fact_id 由程序生成，不让模型决定，避免重复、遗漏或随意改名。
+        task_id = str(finding["task_id"]).strip()
+        normalized_facts: list[dict[str, str]] = []
+        for index, fact in enumerate(facts, start=1):
+            if not isinstance(fact, dict):
+                raise ValueError("facts 中的每一项都必须是对象")
+            fields = ("name", "value", "unit", "note")
+            if not all(isinstance(fact.get(field), str) for field in fields):
+                raise ValueError("fact 的 name、value、unit 和 note 必须是字符串")
+            normalized_facts.append({
+                "fact_id": f"{task_id}.fact_{index}",
+                **{field: str(fact[field]) for field in fields},
+            })
+        finding["task_id"] = task_id
+        finding["facts"] = normalized_facts
         return cast(Finding, finding)

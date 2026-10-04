@@ -11,7 +11,7 @@ from .agent import investigate, safe_error
 from .config import ROOT, public_settings
 from .demo import demonstrate
 from .models import RunState
-from .multi_agent import investigate_multi
+from .orchestration.workflow import investigate_multi_workflow
 from .prompts import STRATEGIES
 from .persistence.local import LOCAL_ROOT
 from .persistence.reports import now, save_run, markdown
@@ -33,7 +33,13 @@ def execute(run):
         with LOCK:
             run["events"].append({"time": now(), "stage": stage, "message": message, "details": details})
     try:
-        worker = demonstrate if run["mode"] == "demo" else investigate_multi if run["mode"] == "multi" else investigate
+        worker = (
+            demonstrate
+            if run["mode"] == "demo"
+            else investigate_multi_workflow
+            if run["mode"] == "multi"
+            else investigate
+        )
         worker(run, emit)
         run["status"] = "completed"
         emit("完成", "核验报告与证据已整理")

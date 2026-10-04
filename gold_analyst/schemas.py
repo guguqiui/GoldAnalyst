@@ -4,6 +4,8 @@ from typing import Literal, TypedDict
 
 AgentRole = Literal["market", "cause", "verification"]
 FindingStatus = Literal["supported", "partial", "contradicted", "insufficient"]
+VerificationStatus = Literal["passed", "partial", "failed", "insufficient"]
+FactVerdict = Literal["supported", "partial", "contradicted", "insufficient"]
 
 
 class TimeRange(TypedDict):
@@ -30,6 +32,7 @@ class TaskPlan(TypedDict):
 class FindingFact(TypedDict):
     """使用字符串保存值和单位，避免金额、日期被浮点数悄悄改写。"""
 
+    fact_id: str
     name: str
     value: str
     unit: str
@@ -48,12 +51,21 @@ class Finding(TypedDict):
     unresolved: list[str]
 
 
-class VerificationResult(TypedDict):
-    """核验 Agent 对前序 Finding 的接受、拒绝与冲突记录。"""
+class FactVerification(TypedDict):
+    """核验 Agent 对一条 Fact 的判定与可追溯证据。"""
 
-    status: FindingStatus
-    accepted_task_ids: list[str]
-    rejected_task_ids: list[str]
-    independent_source_count: int
+    fact_id: str
+    verdict: FactVerdict
+    reason: str
+    supporting_evidence_ids: list[str]
+    contradicting_evidence_ids: list[str]
+    unresolved: list[str]
+
+
+class VerificationResult(TypedDict):
+    """核验 Agent 的逐事实结果；总体 status 由程序汇总。"""
+
+    status: VerificationStatus
+    fact_results: list[FactVerification]
     conflicts: list[str]
     unresolved: list[str]

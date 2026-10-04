@@ -52,4 +52,5 @@ class RunState(TypedDict, total=False):
     allowed_tools: list[str]
     plan: dict[str, object]
     findings: list[dict[str, object]]
+    finding: dict[str, object]
     verification_result: dict[str, object]

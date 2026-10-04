@@ -35,8 +35,39 @@ class MultiAgentSchemaTests(unittest.TestCase):
             evidence_ids=["E1"],
             unresolved=[],
         )
+        self.assertEqual(result["facts"][0]["fact_id"], "market.fact_1")
         self.assertEqual(result["facts"][0]["value"], "5.20")
         self.assertEqual(result["evidence_ids"], ["E1"])
+
+    def test_fact_ids_are_assigned_in_stable_order(self):
+        result = SubmitFindingTool(self.context()).execute(
+            task_id="cause",
+            agent="cause",
+            status="supported",
+            summary="两条原因",
+            facts=[
+                {"name": "美元", "value": "走弱", "unit": "", "note": "来源"},
+                {"name": "利率", "value": "下降", "unit": "", "note": "来源"},
+            ],
+            evidence_ids=["E1"],
+            unresolved=[],
+        )
+        self.assertEqual(
+            [fact["fact_id"] for fact in result["facts"]],
+            ["cause.fact_1", "cause.fact_2"],
+        )
+
+    def test_invalid_fact_shape_is_rejected_before_assigning_id(self):
+        with self.assertRaisesRegex(ValueError, "name、value、unit 和 note"):
+            SubmitFindingTool(self.context()).execute(
+                task_id="cause",
+                agent="cause",
+                status="supported",
+                summary="不完整事实",
+                facts=[{"name": "美元", "value": "走弱", "unit": ""}],
+                evidence_ids=["E1"],
+                unresolved=[],
+            )
 
     def test_submit_finding_rejects_unknown_evidence(self):
         with self.assertRaisesRegex(ValueError, "不存在的证据"):
