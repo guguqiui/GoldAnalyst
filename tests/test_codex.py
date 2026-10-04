@@ -108,30 +108,92 @@ class CodexTests(unittest.TestCase):
     def test_search_uses_same_codex_client_and_keeps_citations(self):
         self.output = [{"type": "message", "id": "msg1", "role": "assistant", "status": "completed",
                         "content": [{"type": "output_text", "text": "摘要", "annotations": [
-                            {"type": "url_citation", "url": "https://example.com", "title": "来源",
+                            {"type": "url_citation", "url": "https://sge.com.cn/gold", "title": "来源",
                              "start_index": 0, "end_index": 2}]}]}]
         run = new_run("live", "test", "source_first")
         registry = create_tool_registry(run, lambda *a: None, CodexClient(), "gpt-5.5")
-        result = registry.get("search_web").execute("黄金")
-        self.assertEqual(result["evidence"]["citations"][0]["url"], "https://example.com")
+        result = registry.get("search_sources").execute("黄金", 10)
+        self.assertEqual(result["evidence"]["citations"][0]["url"], "https://sge.com.cn/gold")
+        self.assertEqual(result["evidence"]["citations"][0]["tier"], 1)
         body = json.loads(self.requests[0].content)
         self.assertIsInstance(body["input"], list)
         self.assertNotIn("max_tool_calls", body)
         self.assertEqual(body["tools"], [{"type": "web_search"}])
+        self.assertIn("web_search_call.action.sources", body["include"])
 
     def test_search_filters_the_target_link_from_citations(self):
         self.output = [{"type": "message", "id": "msg1", "role": "assistant", "status": "completed",
                         "content": [{"type": "output_text", "text": "摘要", "annotations": [
                             {"type": "url_citation", "url": "https://example.com/article", "title": "待核验原文",
                              "start_index": 0, "end_index": 1},
-                            {"type": "url_citation", "url": "https://official.example/report", "title": "独立来源",
+                            {"type": "url_citation", "url": "https://sge.com.cn/report", "title": "独立来源",
                              "start_index": 1, "end_index": 2}]}]}]
         run = new_run("live", "核验 https://example.com/article", "source_first")
         registry = create_tool_registry(run, lambda *a: None, CodexClient(), "gpt-5.5")
-        result = registry.get("search_web").execute("核验文章中的黄金说法")
-        self.assertEqual(result["evidence"]["citations"], [
-            {"title": "独立来源", "url": "https://official.example/report"}
+        result = registry.get("search_sources").execute("核验文章中的黄金说法", 10)
+        self.assertEqual(result["evidence"]["citations"][0]["url"], "https://sge.com.cn/report")
+
+    def test_search_filters_domains_locally_and_keeps_complete_sources(self):
+        self.output = [
+            {"type": "web_search_call", "id": "ws1", "status": "completed", "action": {
+                "type": "search", "query": "黄金", "sources": [
+                    {"type": "url", "title": "官方来源", "url": "https://www.sge.com.cn/gold"},
+                    {"type": "url", "title": "不允许来源", "url": "https://other.example/gold"},
+                ]}},
+            {"type": "message", "id": "msg1", "role": "assistant", "status": "completed",
+             "content": [{"type": "output_text", "text": "摘要", "annotations": []}]},
+        ]
+        run = new_run("live", "核验黄金数据", "source_first")
+        registry = create_tool_registry(run, lambda *a: None, CodexClient(), "gpt-5.5")
+        result = registry.get("search_sources").execute("黄金", 10)
+        self.assertEqual(result["sources"][0]["url"], "https://www.sge.com.cn/gold")
+        self.assertEqual(result["sources"][0]["tier"], 1)
+        self.assertEqual(result["universes"], ["china_spot", "discovery_news"])
+        body = json.loads(self.requests[0].content)
+        self.assertEqual(body["tools"], [{"type": "web_search"}])
+        self.assertIn("sge.com.cn", body["input"][0]["content"])
+        self.assertNotIn("other.example", body["input"][0]["content"])
+        self.assertNotIn("sina.com.cn", body["input"][0]["content"])
+
+    def test_search_stops_before_tier_four_when_two_better_domains_exist(self):
+        primary = [{"type": "message", "id": "msg1", "role": "assistant", "status": "completed",
+                    "content": [{"type": "output_text", "text": "官方摘要", "annotations": [
+                        {"type": "url_citation", "url": "https://sge.com.cn/gold", "title": "上金所",
+                         "start_index": 0, "end_index": 2}]}]}]
+        news = [{"type": "message", "id": "msg2", "role": "assistant", "status": "completed",
+                 "content": [{"type": "output_text", "text": "媒体摘要", "annotations": [
+                     {"type": "url_citation", "url": "https://reuters.com/gold", "title": "Reuters",
+                      "start_index": 0, "end_index": 2},
+                     {"type": "url_citation", "url": "https://sina.com.cn/gold", "title": "新浪",
+                      "start_index": 2, "end_index": 4}]}]}]
+        self.output_queue = [primary, news]
+        run = new_run("live", "黄金上涨原因", "source_first")
+        registry = create_tool_registry(run, lambda *a: None, CodexClient(), "gpt-5.5")
+        result = registry.get("search_sources").execute("黄金上涨原因", 3)
+        self.assertEqual([source["url"] for source in result["sources"]], [
+            "https://sge.com.cn/gold", "https://reuters.com/gold",
         ])
+        self.assertEqual(result["evidence"]["searched_tiers"], ["原始与专业来源", "大型财经媒体"])
+        self.assertEqual(len(self.requests), 2)
+        self.assertNotIn("sina.com.cn", json.loads(self.requests[1].content)["input"][0]["content"])
+
+    def test_search_uses_tier_four_only_as_last_resort_clue(self):
+        empty_primary = [{"type": "message", "id": "msg1", "role": "assistant", "status": "completed",
+                          "content": [{"type": "output_text", "text": "未找到", "annotations": []}]}]
+        empty_news = [{"type": "message", "id": "msg2", "role": "assistant", "status": "completed",
+                       "content": [{"type": "output_text", "text": "仍未找到", "annotations": []}]}]
+        clues = [{"type": "message", "id": "msg3", "role": "assistant", "status": "completed",
+                  "content": [{"type": "output_text", "text": "聚合线索", "annotations": [
+                      {"type": "url_citation", "url": "https://sina.com.cn/gold", "title": "新浪线索",
+                       "start_index": 0, "end_index": 2}]}]}]
+        self.output_queue = [empty_primary, empty_news, clues]
+        run = new_run("live", "黄金上涨原因", "source_first")
+        registry = create_tool_registry(run, lambda *a: None, CodexClient(), "gpt-5.5")
+        result = registry.get("search_sources").execute("黄金上涨原因", 3)
+        self.assertEqual(result["sources"][0]["tier"], 4)
+        self.assertEqual(result["sources"][0]["usage"], "clue_only")
+        self.assertEqual(len(self.requests), 3)
+        self.assertIn("sina.com.cn", json.loads(self.requests[2].content)["input"][0]["content"])
 
     def test_incomplete_or_missing_completion_is_rejected(self):
         for event in ("response.incomplete", "response.failed", ""):

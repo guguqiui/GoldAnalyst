@@ -8,8 +8,10 @@ from unittest.mock import patch
 from gold_analyst.agent import investigate, safe_error
 from gold_analyst.demo import demonstrate
 from gold_analyst.models import DEFAULT_RESEARCH_BUDGET, ResearchBudget
-from gold_analyst.multi_agent import investigate_multi, merge_candidates
+from gold_analyst.multi_agent import AGENT_TOOLSETS, investigate_multi, merge_candidates
 from gold_analyst.server import new_run
+from gold_analyst.source_router import ranked_sources, select_universes
+from gold_analyst.source_universes import SOURCE_TIERS, SOURCE_UNIVERSES
 from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
 from gold_analyst.tools.calculator import CalculateChangeTool
 from gold_analyst.verification import calculate_change, validate_report
@@ -62,6 +64,19 @@ class VerificationTests(unittest.TestCase):
         result = validate_report(report(), [{"id": "E1", "kind": "news"}])
         self.assertEqual(result["claims"][0]["verdict"], "证据不足")
 
+    def test_tier_four_cannot_be_the_only_support(self):
+        result = validate_report(report(), [{"id": "E1", "kind": "source", "source_tier": 4}])
+        self.assertEqual(result["claims"][0]["verdict"], "证据不足")
+        self.assertIn("tier 4", result["validation_notes"][0])
+
+    def test_tier_four_may_supplement_a_better_source(self):
+        candidate = report(["E1", "E2"])
+        evidence = [
+            {"id": "E1", "kind": "source", "source_tier": 2},
+            {"id": "E2", "kind": "source", "source_tier": 4},
+        ]
+        self.assertEqual(validate_report(candidate, evidence)["claims"][0]["verdict"], "有证据支持")
+
     def test_report_fields_required(self):
         bad = report()
         bad.pop("unresolved")
@@ -97,6 +112,24 @@ class ParsingTests(unittest.TestCase):
         for url in ("file:///etc/passwd", "https://user:secret@example.com", "http://localhost:8000"):
             with self.assertRaises(ValueError):
                 validate_public_url(url)
+
+    @patch("gold_analyst.tools.web.fetch")
+    def test_read_url_inherits_search_source_tier(self, fake_fetch):
+        url = "https://sina.com.cn/gold"
+        fake_fetch.return_value = (
+            b"<html><h1>Gold clue</h1><article>This is a sufficiently long article body for testing provenance.</article></html>",
+            "text/html",
+            url,
+        )
+        registry = create_tool_registry(new_run("live", "黄金", "source_first"), lambda *a: None)
+        read_url = registry.get("read_url")
+        read_url.context.set_cached("source_meta:" + url, {
+            "domain": "sina.com.cn", "source_name": "新浪财经", "tier": 4,
+            "universe": "discovery_news", "usage": "clue_only",
+        })
+        item = read_url.execute(url)
+        self.assertEqual(item["source_tier"], 4)
+        self.assertEqual(item["evidence_usage"], "clue_only")
 
 
 class AgentTests(unittest.TestCase):
@@ -228,8 +261,11 @@ class MultiAgentTests(unittest.TestCase):
     def test_three_researchers_are_isolated_and_one_may_fail(self, fake_investigate):
         barrier = threading.Barrier(3)
 
-        def research(child, emit, client, budget, review):
+        seen_tools = {}
+
+        def research(child, emit, client, budget, review, allowed_tools):
             barrier.wait(timeout=2)
+            seen_tools[child["strategy"]] = allowed_tools
             if child["strategy"] == "counter_first":
                 raise ValueError("候选失败")
             child["evidence"].append({"id": "E1", "title": child["strategy"], "text": "620",
@@ -246,6 +282,8 @@ class MultiAgentTests(unittest.TestCase):
         self.assertEqual(len(run["evidence"]), 2)
         self.assertEqual(run["usage"]["tool_calls"], 2)
         self.assertIn("2/3", run["review_status"])
+        self.assertEqual(seen_tools, AGENT_TOOLSETS)
+        self.assertEqual(run["candidates"][0]["allowed_tools"], sorted(AGENT_TOOLSETS["source_first"]))
 
 
 class ToolRegistryTests(unittest.TestCase):
@@ -253,16 +291,35 @@ class ToolRegistryTests(unittest.TestCase):
         target = "https://example.com/article?a=1&utm_source=test"
         registry = create_tool_registry(new_run("live", target, "source_first"), lambda *a: None)
         with self.assertRaisesRegex(ValueError, "待核验链接不能作为搜索查询"):
-            registry.get("search_web").execute("请搜索 https://example.com/article?a=1")
+            registry.get("search_sources").execute(
+                "请搜索 https://example.com/article?a=1", 10,
+            )
+
+    def test_search_schema_only_asks_model_for_query_and_limit(self):
+        registry = create_tool_registry(new_run("live", "黄金", "source_first"), lambda *a: None)
+        schema = registry.get("search_sources").schema()
+        self.assertEqual(schema["parameters"]["required"], ["query", "limit"])
 
     def test_registry_binds_all_tools(self):
         registry = create_tool_registry(new_run("demo", "", "source_first"), lambda *a: None)
         self.assertEqual(
             registry.names,
-            {"read_url", "list_news", "get_sge_data", "calculate_change", "search_web", "submit_report"},
+            {"read_url", "get_sge_data", "calculate_change", "search_sources", "submit_report"},
         )
         self.assertTrue(registry.get("submit_report").terminal)
-        self.assertEqual(len(registry.schemas()), 6)
+        self.assertEqual(len(registry.schemas()), 5)
+
+    def test_registry_enforces_tool_allowlist(self):
+        registry = create_tool_registry(
+            new_run("live", "测试", "scope_first"), lambda *a: None,
+            allowed_names={"get_sge_data", "calculate_change", "submit_report"},
+        )
+        self.assertEqual(registry.names, {"get_sge_data", "calculate_change", "submit_report"})
+        with self.assertRaisesRegex(ValueError, "未知工具"):
+            registry.get("search_sources")
+        with self.assertRaisesRegex(ValueError, "工具白名单包含未知工具"):
+            create_tool_registry(new_run("live", "测试", "scope_first"), lambda *a: None,
+                                 allowed_names={"not_a_tool"})
 
     def test_duplicate_tool_names_rejected(self):
         class ExampleTool(Tool):
@@ -276,6 +333,37 @@ class ToolRegistryTests(unittest.TestCase):
         context = ToolContext(new_run("demo", "", "source_first"), lambda *a: None)
         with self.assertRaises(ValueError):
             ToolRegistry([ExampleTool(context), ExampleTool(context)])
+
+
+class SourceUniverseTests(unittest.TestCase):
+    def test_each_universe_has_ordered_unique_sources(self):
+        self.assertEqual(SOURCE_TIERS[1], "交易所、监管机构、央行或产品发行人")
+        self.assertEqual(SOURCE_UNIVERSES["china_spot"]["sources"][0]["domain"], "sge.com.cn")
+        self.assertEqual(SOURCE_UNIVERSES["comex_futures"]["sources"][0]["domain"], "cmegroup.com")
+        for universe in SOURCE_UNIVERSES.values():
+            domains = [source["domain"] for source in universe["sources"]]
+            self.assertEqual(len(domains), len(set(domains)))
+            self.assertTrue(all(source["tier"] in SOURCE_TIERS for source in universe["sources"]))
+
+
+class SourceRouterTests(unittest.TestCase):
+    def test_generic_rising_gold_defaults_to_china_and_adds_macro(self):
+        self.assertEqual(
+            select_universes("最近黄金为什么上涨"),
+            ["china_spot", "macro_drivers", "discovery_news"],
+        )
+
+    def test_explicit_markets_select_their_own_universe(self):
+        self.assertEqual(select_universes("查看 XAU/USD 报价"), ["london_spot", "discovery_news"])
+        self.assertEqual(select_universes("COMEX 黄金持仓变化"), ["comex_futures", "discovery_news"])
+        self.assertEqual(select_universes("GLD ETF 持仓"), ["gold_etf", "discovery_news"])
+
+    def test_ranked_sources_keep_first_domain_only(self):
+        sources = ranked_sources("上海金上涨原因")
+        domains = [source["domain"] for source in sources]
+        self.assertEqual(domains[0], "sge.com.cn")
+        self.assertEqual(len(domains), len(set(domains)))
+        self.assertEqual(domains.count("pbc.gov.cn"), 1)
 
 
 if __name__ == "__main__":

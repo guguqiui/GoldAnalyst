@@ -24,7 +24,7 @@ python3 main.py
 python3 main.py --demo
 ```
 
-结果保存在 `reports/` 的 JSON 和 Markdown 中。报告可在网页里下载，重启后也可查看最近记录。
+结果保存在 `.local/runs/<run_id>/` 中。报告可在网页里下载，重启后也可查看最近记录。
 
 每次真实模型调用会保存为 `.local/runs/<run_id>/messages/001.json`：其中 `agent` 是
 发给模型的完整 instructions、上下文、工具 schema 与 tool choice；`llm_raw_response` 是
@@ -52,7 +52,7 @@ uv run python main.py --provider codex
 
 页面仍每秒轮询一次：模型、工具和裁判显示“执行中 / 已完成 / 失败”，最终报告一次性展示。
 底层 Codex 响应虽然是流式传输，但接入层会等完整响应再交给 Agent；页面不显示逐字输出。
-推理与 `search_web` 共用所选客户端；搜索不可用时保留错误，**不会自动退回付费 API**。
+推理与 `search_sources` 共用所选客户端；搜索不可用时保留错误，**不会自动退回付费 API**。
 注意：Codex 不接受原先 `max_output_tokens` 和 `max_tool_calls` 参数，这两个服务端上限
 在 Codex 模式下不生效；Agent 自身的轮数、研究工具次数、搜索请求次数限制仍保留。
 
@@ -135,10 +135,9 @@ GOLD_MODEL=gpt-4.1-mini
 | 工具 | 用途 |
 |---|---|
 | `read_url` | 读 HTML/PDF 并保存证据。PDF 最多 15 页，扫描图片不做 OCR |
-| `list_news` | 找同花顺黄金列表中的文章链接，最多 20 条 |
 | `get_sge_data` | 查指定日期上金所历史表格，不是实时行情 |
 | `calculate_change` | 使用 Decimal 计算价差与涨跌幅，不执行任意代码 |
-| `search_web` | 调用 OpenAI 内置网页搜索，只需同一个 OpenAI Key |
+| `search_sources` | 根据黄金品种自动选择来源候选集，调用 OpenAI 网页搜索并返回可继续阅读的来源 |
 | `submit_report` | 提交结构化核验报告，检查证据编号 |
 
 网页资料是数据，不能给 Agent 下指令。只读公开页面，不登录，不绕过 403/验证码，不访问本机与内网。单页最大 2 MB，正文截取 18,000 字符，超出部分有截断标记。
@@ -184,14 +183,15 @@ GoldAnalyst/
 │   ├── verification.py     计算与引用结构验证
 │   ├── prompts.py          研究策略和角色
 │   ├── demo.py             明确虚构的离线教学流程
-│   ├── storage.py          保存 JSON 和 Markdown
+│   ├── storage.py          将普通运行保存到 .local，评测种子保存到 reports
 │   ├── config.py           本地环境配置
 │   └── server.py           仅监听 127.0.0.1 的开发服务
 ├── web/                    无需 npm 的本地页面
 ├── tests/                  不用 Key 的单元与代理协议测试
 ├── .env.example            可提交的空白配置模板
 ├── uv.lock                 锁定依赖版本
-└── reports/                运行后生成，默认不提交
+├── .local/runs/            普通调查与模型调用记录，默认不提交
+└── reports/seed/           进化/评测种子运行，默认不提交
 ```
 
 如果参考 CoreCoder，先看它的 `agent.py`、`llm.py` 和 `tools/base.py`：`llm.py` 隔离供应商 SDK，Agent 因此只处理项目自己的稳定结构。暂时不用学习权限、终端操作和上下文压缩等编码代理功能。
@@ -220,7 +220,7 @@ GoldAnalyst/
 
 ```bash
 uv run python -m gold_analyst.evaluation validate
-uv run python -m gold_analyst.evaluation score 案例ID reports/运行记录.json
+uv run python -m gold_analyst.evaluation score 案例ID .local/runs/运行ID/run.json
 ```
 
 当前评分器不调用模型，先检查 verdict、必要数字与口径、原始来源引用和运行预算。它用于校准

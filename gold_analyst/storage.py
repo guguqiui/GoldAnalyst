@@ -1,4 +1,4 @@
-"""每次运行保存一份 JSON 和 Markdown；原始工具证据保留在 JSON 中。"""
+"""保存运行结果；普通调查进 .local，评测种子保留在 reports。"""
 from datetime import datetime, timezone
 import json
 from .config import ROOT
@@ -43,11 +43,14 @@ def report_folder(run):
 
 
 def save_run(run):
+    report_markdown = markdown(run)
+    local_path = save_local_run(run, report_markdown)
+    if run.get("artifact_group") != "seed":
+        return local_path
+
     folder = report_folder(run)
     folder.mkdir(parents=True, exist_ok=True)
     json_path = folder / f"{run['id']}.json"
     json_path.write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
-    report_markdown = markdown(run)
     (folder / f"{run['id']}.md").write_text(report_markdown, encoding="utf-8")
-    save_local_run(run, report_markdown)
     return json_path

@@ -42,6 +42,7 @@ def investigate(
     client: object | None = None,
     budget: ResearchBudget = DEFAULT_RESEARCH_BUDGET,
     review: bool = True,
+    allowed_tools: set[str] | frozenset[str] | None = None,
 ) -> RunState:
     cfg = settings()
     persist_llm_trace = client is None
@@ -49,7 +50,7 @@ def investigate(
     strategy = STRATEGIES[run["strategy"]]
     run["model"] = cfg["model"]
     run["strategy_version"] = strategy["version"]
-    tools = create_tool_registry(run, emit, llm.client, cfg["model"])
+    tools = create_tool_registry(run, emit, llm.client, cfg["model"], allowed_tools)
     messages: list[object] = [{"role": "user", "content": run["input"]}]
     draft: dict[str, object] | None = None
     started = time.monotonic()
@@ -73,8 +74,8 @@ def investigate(
         tool_schemas: list[dict[str, object]],
         choice: ToolChoice = "auto",
     ) -> ModelResponse:
-        request = {"instructions": instructions, "input": inputs,
-                   "tools": tool_schemas, "tool_choice": choice}
+        request = {"instructions": instructions, "input": inputs, "tools": tool_schemas, "tool_choice": choice}
+
         with activity(emit, activity_stage, activity_message):
             result = llm.respond(instructions, inputs, tool_schemas, choice)
         run["usage"]["input_tokens"] += result.input_tokens

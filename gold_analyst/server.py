@@ -13,6 +13,7 @@ from .demo import demonstrate
 from .models import RunState
 from .multi_agent import investigate_multi
 from .prompts import STRATEGIES
+from .local_state import LOCAL_ROOT
 from .storage import now, save_run, markdown
 from .server_state import blank_run
 
@@ -71,7 +72,7 @@ def execute(run):
                     run["evaluation_error"] = str(exc)
                     save_run(run)
         except OSError:
-            run["save_error"] = "无法写入 reports 文件夹，请检查磁盘权限。页面仍保留本次结果。"
+            run["save_error"] = "无法写入 .local 运行目录，请检查磁盘权限。页面仍保留本次结果。"
     return run
 
 
@@ -80,7 +81,7 @@ def load_run(run_id):
         return None
     if run_id in RUNS:
         return RUNS[run_id]
-    path = ROOT / "reports" / f"{run_id}.json"
+    path = LOCAL_ROOT / "runs" / run_id / "run.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
@@ -126,7 +127,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {**public_settings(), "strategies": STRATEGIES})
         if path == "/api/runs":
             summaries = []
-            for file in sorted((ROOT / "reports").glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:12]:
+            files = (LOCAL_ROOT / "runs").glob("*/run.json")
+            for file in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:12]:
                 try:
                     run = json.loads(file.read_text(encoding="utf-8"))
                     summaries.append({k: run.get(k) for k in ("id", "mode", "created_at", "status", "input")})

@@ -49,6 +49,12 @@ def validate_report(report, evidence):
             if all(by_id[r].get("kind") in {"news", "search"} for r in refs):
                 claim["verdict"] = "证据不足"
                 notes.append("仅有新闻或搜索线索的确定性结论已降级，需补充独立原始证据。")
+            elif all(
+                by_id[r].get("source_tier") == 4 or by_id[r].get("kind") == "search"
+                for r in refs
+            ):
+                claim["verdict"] = "证据不足"
+                notes.append("仅有 tier 4 聚合线索的确定性结论已降级，需补充更高等级来源。")
     # 检查正文中显式写出的 [E99] 等引用。
     import json
     for ref in re.findall(r"\[(E\d+)\]", json.dumps(report, ensure_ascii=False)):

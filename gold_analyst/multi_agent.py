@@ -1,4 +1,4 @@
-"""V2.1：三个隔离研究员并行调查，再由独立裁判合并证据与结论。"""
+"""V2.2：三个工具权限不同的研究员并行调查，再由独立裁判合并。"""
 from __future__ import annotations
 
 import copy
@@ -16,6 +16,13 @@ from .prompts import JUDGE, STRATEGIES
 from .progress import activity
 from .server_state import blank_run
 from .tools import create_tool_registry
+
+
+AGENT_TOOLSETS = {
+    "source_first": frozenset({"search_sources", "read_url", "submit_report"}),
+    "scope_first": frozenset({"get_sge_data", "calculate_change", "read_url", "submit_report"}),
+    "counter_first": frozenset({"search_sources", "read_url", "submit_report"}),
+}
 
 
 def _source_key(item: dict[str, object]) -> str:
@@ -63,6 +70,7 @@ def merge_candidates(candidates: list[RunState]) -> tuple[list[dict[str, object]
             "report": report,
             "usage": copy.deepcopy(candidate["usage"]),
             "evidence_count": len(candidate.get("evidence", [])),
+            "allowed_tools": candidate.get("allowed_tools", []),
             "error": candidate.get("error", ""),
         })
     return merged, summaries
@@ -81,9 +89,13 @@ def investigate_multi(
 
     def work(strategy: str) -> RunState:
         child = blank_run("live", run["input"], strategy, run_id=f"{run['id']}-{strategy}")
+        child["allowed_tools"] = sorted(AGENT_TOOLSETS[strategy])
         child_emit = lambda stage, message, details=None: emit(f"{STRATEGIES[strategy]['name']}研究员", message, details)
         try:
-            investigate(child, child_emit, client, budget, review=False)
+            investigate(
+                child, child_emit, client, budget,
+                review=False, allowed_tools=AGENT_TOOLSETS[strategy],
+            )
             child["status"] = "completed"
         except Exception as exc:
             child["status"] = "failed"
@@ -110,7 +122,7 @@ def investigate_multi(
         run.setdefault("message_files", []).extend(item.get("message_files", []))
 
     emit("裁判 Agent", f"合并 {len(successful)} 份候选报告，并对 {len(evidence)} 条去重证据进行裁决")
-    tools = create_tool_registry(run, emit, client, cfg["model"])
+    tools = create_tool_registry(run, emit, client, cfg["model"], {"submit_report"})
     report_tool = tools.get("submit_report")
     judge_input = json.dumps({"task": run["input"], "candidates": summaries, "evidence": evidence}, ensure_ascii=False)
     with activity(emit, "裁判 Agent", "检查候选报告并生成最终结论"):
@@ -143,7 +155,7 @@ def investigate_multi(
     run["report"] = final
     run["model"] = cfg["model"]
     run["strategy"] = "multi_agent"
-    run["strategy_version"] = "2.1"
+    run["strategy_version"] = "2.2"
     run["review_status"] = f"Multi-Agent 裁判完成（{len(successful)}/{len(candidates)} 个研究员成功）"
     run["notice"] = "三名独立研究员并行调查并由裁判合并；模型裁决仍需人工复核。"
     return run

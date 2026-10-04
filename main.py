@@ -42,7 +42,7 @@ def main():
             else:
                 print("\n本次评测无效：" + "；".join(run["evaluation"].get("invalid_reasons", [])))
             print(f"评分结果保存在 {run['evaluation']['result_path']}")
-        print(f"\n完整过程保存在 reports/{run['id']}.json")
+        print(f"\n完整过程保存在 .local/runs/{run['id']}/run.json")
     else:
         serve(args.port)
 

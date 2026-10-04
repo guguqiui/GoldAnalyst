@@ -5,7 +5,7 @@ import re
 import socket
 from urllib.parse import urljoin, urlparse
 
-from .base import Tool
+from .base import Tool, canonical_url
 
 MAX_BYTES = 2_000_000
 
@@ -130,6 +130,20 @@ class ReadURLTool(Tool):
             raise ValueError("页面正文过少，可能需动态加载；不能当作完整证据")
         hostname = urlparse(resolved_url).hostname or ""
         kind = "news" if hostname == "10jqka.com.cn" or hostname.endswith(".10jqka.com.cn") else "source"
-        item = self.context.add_evidence(url=resolved_url, kind=kind, **parsed)
+        source_meta = self.context.get_cached("source_meta:" + canonical_url(url))
+        if source_meta is None:
+            source_meta = self.context.get_cached("source_meta:" + canonical_url(resolved_url))
+        provenance = {}
+        if isinstance(source_meta, dict):
+            provenance = {
+                "source_domain": source_meta.get("domain"),
+                "source_name": source_meta.get("source_name"),
+                "source_tier": source_meta.get("tier"),
+                "source_universe": source_meta.get("universe"),
+                "evidence_usage": source_meta.get("usage"),
+            }
+        elif self.context.is_target_url(url) or self.context.is_target_url(resolved_url):
+            provenance = {"evidence_usage": "target_material"}
+        item = self.context.add_evidence(url=resolved_url, kind=kind, **parsed, **provenance)
         self.context.set_cached(url, item)
         return item

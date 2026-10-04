@@ -61,7 +61,7 @@ def save_llm_turn(run_id: str, sequence: int, label: str, model: str, request, r
     return str(path.relative_to(ROOT))
 
 
-def save_local_run(run, report_markdown: str) -> None:
+def save_local_run(run, report_markdown: str) -> Path:
     """把最终运行和报告镜像到同一个 UUID 目录，便于按一次调查回看。"""
     run_dir = LOCAL_ROOT / "runs" / run["id"]
     _atomic_json(run_dir / "run.json", _jsonable(run))
@@ -72,3 +72,4 @@ def save_local_run(run, report_markdown: str) -> None:
         temporary = path.with_suffix(".md.tmp")
         temporary.write_text(report_markdown, encoding="utf-8")
         temporary.replace(path)
+    return run_dir / "run.json"

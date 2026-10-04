@@ -49,3 +49,4 @@ class RunState(TypedDict, total=False):
     adjudication: list[dict[str, object]]
     artifact_group: str
     message_files: list[str]
+    allowed_tools: list[str]
