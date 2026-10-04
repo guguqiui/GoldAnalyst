@@ -1,8 +1,8 @@
 """保存运行结果；普通调查进 .local，评测种子保留在 reports。"""
 from datetime import datetime, timezone
 import json
-from .config import ROOT
-from .local_state import save_local_run
+from ..config import ROOT
+from .local import save_local_run
 
 
 def now():

@@ -10,8 +10,8 @@ from gold_analyst.demo import demonstrate
 from gold_analyst.models import DEFAULT_RESEARCH_BUDGET, ResearchBudget
 from gold_analyst.multi_agent import AGENT_TOOLSETS, investigate_multi, merge_candidates
 from gold_analyst.server import new_run
-from gold_analyst.source_router import ranked_sources, select_universes
-from gold_analyst.source_universes import SOURCE_TIERS, SOURCE_UNIVERSES
+from gold_analyst.sources.router import ranked_sources, select_universes
+from gold_analyst.sources.universes import SOURCE_TIERS, SOURCE_UNIVERSES
 from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
 from gold_analyst.tools.calculator import CalculateChangeTool
 from gold_analyst.verification import calculate_change, validate_report

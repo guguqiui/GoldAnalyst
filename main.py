@@ -2,7 +2,7 @@
 import argparse
 import os
 from gold_analyst.server import serve, execute, new_run
-from gold_analyst.storage import markdown
+from gold_analyst.persistence.reports import markdown
 
 
 def main():
@@ -18,7 +18,7 @@ def main():
     if args.provider:
         os.environ["GOLD_PROVIDER"] = args.provider
     if args.login_codex:
-        from gold_analyst.codex import login, CodexLoginError
+        from gold_analyst.providers.codex import login, CodexLoginError
         try:
             login()
         except CodexLoginError as exc:

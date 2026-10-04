@@ -2,7 +2,7 @@
 from uuid import uuid4
 
 from .models import RunState
-from .storage import now
+from .persistence.reports import now
 
 
 def blank_run(mode: str, task: str, strategy: str, run_id: str | None = None) -> RunState:

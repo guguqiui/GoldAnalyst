@@ -50,3 +50,6 @@ class RunState(TypedDict, total=False):
     artifact_group: str
     message_files: list[str]
     allowed_tools: list[str]
+    plan: dict[str, object]
+    findings: list[dict[str, object]]
+    verification_result: dict[str, object]

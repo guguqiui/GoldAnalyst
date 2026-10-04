@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from openai import BadRequestError, OpenAI
 
-from ..source_router import ranked_sources, select_universes
+from ..sources.router import ranked_sources, select_universes
 from .base import Tool, canonical_url, urls_in_text
 
 MAX_SEARCH_REQUESTS = 5

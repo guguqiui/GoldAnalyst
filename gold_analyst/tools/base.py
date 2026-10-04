@@ -8,7 +8,7 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..models import RunState
-from ..storage import now
+from ..persistence.reports import now
 
 
 def canonical_url(url: str) -> str:

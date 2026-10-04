@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 
-from .config import ROOT
+from ..config import ROOT
 
 LOCAL_ROOT = ROOT / ".local"
 

@@ -10,8 +10,8 @@ from collections.abc import Callable
 from typing import cast
 
 from .config import settings
-from .llm import ModelResponse, ToolCall, ToolChoice, create_llm
-from .local_state import save_llm_turn
+from .providers.llm import ModelResponse, ToolCall, ToolChoice, create_llm
+from .persistence.local import save_llm_turn
 from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import SYSTEM, REVIEW, STRATEGIES
 from .progress import activity

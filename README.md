@@ -160,7 +160,7 @@ GOLD_MODEL=gpt-4.1-mini
 3. `gold_analyst/tools/base.py`：所有工具的共同接口和注册表。
 4. `gold_analyst/tools/__init__.py`：唯一的工具绑定入口。
 5. `gold_analyst/tools/` 里的其他文件：每个文件负责一种工具。
-6. `gold_analyst/llm.py`：把 OpenAI SDK 输出转换成项目自己的数据类。
+6. `gold_analyst/providers/llm.py`：把模型 SDK 输出转换成项目自己的数据类。
 7. `gold_analyst/agent.py`：只使用 `ModelResponse` 和 `ToolCall` 的核心循环。
 8. `gold_analyst/prompts.py`：调查员、审核员及三个策略的提示词。
 
@@ -169,21 +169,28 @@ GoldAnalyst/
 ├── main.py                 运行入口
 ├── gold_analyst/
 │   ├── agent.py            OpenAI Responses 工具调用循环
-│   ├── llm.py              SDK 适配层与稳定响应数据类
 │   ├── models.py           项目运行状态类型
+│   ├── multi_agent.py      Multi-Agent 编排入口
+│   ├── providers/          模型供应商适配
+│   │   ├── llm.py          稳定响应数据类与统一入口
+│   │   └── codex.py        Codex 登录与协议转换
+│   ├── persistence/        本地持久化
+│   │   ├── local.py        模型消息与 UUID 运行目录
+│   │   └── reports.py      报告渲染及评测种子保存
+│   ├── sources/            黄金来源配置
+│   │   ├── universes.py    不同黄金品种的候选来源集
+│   │   └── router.py       根据问题选择候选集
 │   ├── tools/              可扩展工具包
 │   │   ├── base.py         Tool 基类、共享上下文和注册表
 │   │   ├── __init__.py     集中实例化并绑定全部工具
 │   │   ├── web.py          网页 / PDF 读取
-│   │   ├── news.py         同花顺新闻列表
 │   │   ├── sge.py          上金所历史数据
 │   │   ├── calculator.py   确定性价格计算
-│   │   ├── search.py       OpenAI 联网搜索
+│   │   ├── search.py       按来源候选集联网搜索
 │   │   └── report.py       结构化报告提交
 │   ├── verification.py     计算与引用结构验证
 │   ├── prompts.py          研究策略和角色
 │   ├── demo.py             明确虚构的离线教学流程
-│   ├── storage.py          将普通运行保存到 .local，评测种子保存到 reports
 │   ├── config.py           本地环境配置
 │   └── server.py           仅监听 127.0.0.1 的开发服务
 ├── web/                    无需 npm 的本地页面
@@ -194,7 +201,9 @@ GoldAnalyst/
 └── reports/seed/           进化/评测种子运行，默认不提交
 ```
 
-如果参考 CoreCoder，先看它的 `agent.py`、`llm.py` 和 `tools/base.py`：`llm.py` 隔离供应商 SDK，Agent 因此只处理项目自己的稳定结构。暂时不用学习权限、终端操作和上下文压缩等编码代理功能。
+如果参考 CoreCoder，先看它的 `agent.py`、`llm.py` 和 `tools/base.py`：本项目对应的
+`providers/llm.py` 隔离供应商 SDK，Agent 因此只处理项目自己的稳定结构。暂时不用学习权限、
+终端操作和上下文压缩等编码代理功能。
 
 ### 这种 Tool 类和 `@tool` 有什么区别？
 

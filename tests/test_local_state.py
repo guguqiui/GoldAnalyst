@@ -5,8 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
 
-from gold_analyst.local_state import save_llm_turn, save_local_run
-from gold_analyst.storage import save_run
+from gold_analyst.persistence.local import save_llm_turn, save_local_run
+from gold_analyst.persistence.reports import save_run
 
 
 class LocalStateTests(unittest.TestCase):
@@ -20,8 +20,8 @@ class LocalStateTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("gold_analyst.local_state.LOCAL_ROOT", root / ".local"), \
-                 patch("gold_analyst.local_state.ROOT", root):
+            with patch("gold_analyst.persistence.local.LOCAL_ROOT", root / ".local"), \
+                 patch("gold_analyst.persistence.local.ROOT", root):
                 request = {"instructions": "调查", "input": [{"role": "user", "content": "黄金"}]}
                 relative = save_llm_turn("run_1", 1, "第 1 轮", "test-model", request, response)
                 payload = json.loads((root / relative).read_text(encoding="utf-8"))
@@ -40,7 +40,7 @@ class LocalStateTests(unittest.TestCase):
         run = {"id": "run_2", "status": "completed", "report": {"title": "调查报告"}}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("gold_analyst.local_state.LOCAL_ROOT", root / ".local"):
+            with patch("gold_analyst.persistence.local.LOCAL_ROOT", root / ".local"):
                 save_local_run(run, "# 调查报告")
                 run_dir = root / ".local" / "runs" / "run_2"
                 self.assertEqual(json.loads((run_dir / "report.json").read_text())["title"], "调查报告")
@@ -51,8 +51,8 @@ class LocalStateTests(unittest.TestCase):
         run = {"id": "run_3", "mode": "live", "created_at": "now", "report": {"title": "普通调查"}}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("gold_analyst.local_state.LOCAL_ROOT", root / ".local"), \
-                 patch("gold_analyst.storage.ROOT", root):
+            with patch("gold_analyst.persistence.local.LOCAL_ROOT", root / ".local"), \
+                 patch("gold_analyst.persistence.reports.ROOT", root):
                 path = save_run(run)
                 self.assertEqual(path, root / ".local" / "runs" / "run_3" / "run.json")
                 self.assertFalse((root / "reports").exists())
@@ -64,8 +64,8 @@ class LocalStateTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("gold_analyst.local_state.LOCAL_ROOT", root / ".local"), \
-                 patch("gold_analyst.storage.ROOT", root):
+            with patch("gold_analyst.persistence.local.LOCAL_ROOT", root / ".local"), \
+                 patch("gold_analyst.persistence.reports.ROOT", root):
                 path = save_run(run)
                 self.assertEqual(path, root / "reports" / "seed" / "run_4.json")
                 self.assertTrue(path.exists())

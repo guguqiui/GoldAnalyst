@@ -23,7 +23,7 @@ def settings():
 def public_settings():
     cfg = settings()
     if cfg["provider"] == "codex":
-        from .codex import has_login
+        from .providers.codex import has_login
         ready = has_login() and bool(cfg["model"])
     else:
         ready = cfg["provider"] == "openai" and bool(cfg["api_key"] and cfg["base_url"] and cfg["model"])

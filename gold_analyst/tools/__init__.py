@@ -4,6 +4,7 @@ from collections.abc import Callable, Collection
 from ..models import RunState
 from .base import Tool, ToolContext, ToolRegistry
 from .calculator import CalculateChangeTool
+from .finding import SubmitFindingTool
 from .report import SubmitReportTool
 from .search import SearchSourcesTool
 from .sge import SGEDataTool
@@ -41,6 +42,7 @@ __all__ = [
     "Tool",
     "ToolContext",
     "ToolRegistry",
+    "SubmitFindingTool",
     "create_tool_registry",
     "parse_html",
     "validate_public_url",

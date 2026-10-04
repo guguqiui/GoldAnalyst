@@ -11,7 +11,7 @@ import time
 
 import httpx
 
-from .config import ROOT
+from ..config import ROOT
 
 TOKEN_PATH = ROOT / ".local" / "codex.json"
 LOGIN_HINT = "请运行 uv run python main.py --login-codex 完成独立登录。"

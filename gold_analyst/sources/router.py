@@ -1,6 +1,6 @@
 """根据调查问题选择黄金来源候选集。"""
 
-from .source_universes import SOURCE_UNIVERSES
+from .universes import SOURCE_UNIVERSES
 
 
 # 这些是具体黄金品种；宏观驱动和新闻补充由后续规则追加。
@@ -60,4 +60,3 @@ def ranked_sources(question: str) -> list[dict[str, object]]:
             seen_domains.add(domain)
             result.append({**source, "universe": universe_name})
     return result
-

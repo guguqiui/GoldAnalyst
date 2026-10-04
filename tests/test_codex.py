@@ -10,10 +10,10 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 import httpx
-from gold_analyst.codex import CodexClient, CodexLoginError, get_credentials, has_login, token_storage
+from gold_analyst.providers.codex import CodexClient, CodexLoginError, get_credentials, has_login, token_storage
 from gold_analyst.agent import investigate
 from gold_analyst.config import public_settings, settings
-from gold_analyst.llm import create_llm
+from gold_analyst.providers.llm import create_llm
 from gold_analyst.progress import activity
 from gold_analyst.server import new_run
 from gold_analyst.tools import create_tool_registry
@@ -66,8 +66,8 @@ class CodexTests(unittest.TestCase):
             kwargs["transport"] = httpx.MockTransport(handle)
             return REAL_HTTPX_CLIENT(**kwargs)
 
-        self.token_patch = patch("gold_analyst.codex.get_credentials", return_value=NS(access="test-token", account_id="test-account"))
-        self.client_patch = patch("gold_analyst.codex.httpx.Client", side_effect=client_factory)
+        self.token_patch = patch("gold_analyst.providers.codex.get_credentials", return_value=NS(access="test-token", account_id="test-account"))
+        self.client_patch = patch("gold_analyst.providers.codex.httpx.Client", side_effect=client_factory)
         self.token_patch.start()
         self.client_patch.start()
         self.addCleanup(self.token_patch.stop)
@@ -212,8 +212,8 @@ class CodexTests(unittest.TestCase):
         events = []
         with tempfile.TemporaryDirectory() as directory, \
              patch("gold_analyst.agent.settings", return_value=cfg), \
-             patch("gold_analyst.local_state.LOCAL_ROOT", Path(directory) / ".local"), \
-             patch("gold_analyst.local_state.ROOT", Path(directory)):
+             patch("gold_analyst.persistence.local.LOCAL_ROOT", Path(directory) / ".local"), \
+             patch("gold_analyst.persistence.local.ROOT", Path(directory)):
             run = investigate(new_run("live", "核验涨幅", "source_first"), lambda *args: events.append(args))
         self.assertEqual(run["report"]["title"], "模拟核验")
         self.assertEqual(run["usage"]["tool_calls"], 1)
@@ -228,7 +228,7 @@ class LoginAndProgressTests(unittest.TestCase):
     def test_storage_does_not_import_shared_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "own.json"
-            with patch("gold_analyst.codex.TOKEN_PATH", path):
+            with patch("gold_analyst.providers.codex.TOKEN_PATH", path):
                 storage = token_storage()
                 self.assertEqual(storage.get_token_path(), path)
                 self.assertFalse(storage._import_codex_cli)
@@ -249,7 +249,7 @@ class LoginAndProgressTests(unittest.TestCase):
 
     def test_codex_config_does_not_require_api_key(self):
         with patch.dict(os.environ, {"GOLD_PROVIDER": "codex", "GOLD_CODEX_MODEL": "test-model", "OPENAI_API_KEY": ""}):
-            with patch("gold_analyst.codex.has_login", return_value=True):
+            with patch("gold_analyst.providers.codex.has_login", return_value=True):
                 self.assertEqual(settings()["model"], "test-model")
                 self.assertTrue(public_settings()["model_ready"])
                 self.assertNotIn("api_key", public_settings())

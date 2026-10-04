@@ -9,8 +9,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .agent import investigate, safe_error
 from .config import settings
-from .llm import create_llm
-from .local_state import save_llm_turn
+from .providers.llm import create_llm
+from .persistence.local import save_llm_turn
 from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import JUDGE, STRATEGIES
 from .progress import activity
