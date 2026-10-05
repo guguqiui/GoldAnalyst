@@ -15,7 +15,12 @@ from .persistence.local import save_llm_turn
 from .models import DEFAULT_RESEARCH_BUDGET, ResearchBudget, RunState
 from .prompts import SYSTEM, REVIEW, STRATEGIES
 from .progress import activity
+from .runtime import ToolResultLedger, microcompact
 from .tools import Tool, create_tool_registry
+
+
+DYNAMIC_CONTEXT_CHAR_LIMIT = 60_000
+KEEP_RECENT_TOOL_RESULTS = 3
 
 
 def safe_error(exc: Exception) -> str:
@@ -61,6 +66,10 @@ def investigate(
     draft: dict[str, object] | None = None
     started = time.monotonic()
     output_tool = tools.get(output_tool_name)
+    # 保存完整成功结果及 call_id 对应关系。当前尚未压缩 messages，因此重复调用
+    # 只需提示模型读取前文；下一阶段会在结果消失后从该账本恢复。
+    tool_ledger = ToolResultLedger()
+    force_finalize_for_stall = False
 
     def emit_model_result(label: str, result: ModelResponse) -> None:
         """展示模型可观察的决定，不伪装成或泄露模型隐藏思维过程。"""
@@ -96,21 +105,30 @@ def investigate(
         emit_model_result(label, result)
         return result
 
-    def execute_research(index: int, call: ToolCall, tool: Tool) -> tuple[int, object]:
+    def execute_research(index: int, call: ToolCall, tool: Tool) -> tuple[int, object, bool]:
         """在线程中执行一个研究工具；异常转换成模型可读的工具结果。"""
         try:
             with activity(emit, "调用工具", call.name, call.arguments):
                 output = tool.execute(**call.arguments)
-            return index, output
+            return index, output, True
         except Exception as exc:
             output = {"error": safe_error(exc)}
             emit("工具受阻", output["error"])
-            return index, output
+            return index, output, False
 
     # 前 budget.rounds 轮允许选择研究工具；最后一轮只允许提交结构化结果。
     for round_number in range(budget.rounds + 1):
+        lost_keys = microcompact(
+            messages,
+            tool_ledger,
+            char_limit=DYNAMIC_CONTEXT_CHAR_LIMIT,
+            keep_recent=KEEP_RECENT_TOOL_RESULTS,
+        )
+        if lost_keys:
+            emit("上下文压缩", f"已收起 {len(lost_keys)} 条较早工具结果；完整内容仍保存在运行账本中")
         finalize = (
-            round_number == budget.rounds
+            force_finalize_for_stall
+            or round_number == budget.rounds
             or run["usage"]["tool_calls"] >= budget.tool_calls
             or time.monotonic() - started > budget.duration_seconds
         )
@@ -125,6 +143,9 @@ def investigate(
         calls = response.tool_calls
         if not calls:
             messages.append({"role": "user", "content": f"请调用工具继续调查，或调用 {output_tool_name} 提交结构化结果。"})
+            if tool_ledger.finish_round() and not force_finalize_for_stall:
+                force_finalize_for_stall = True
+                emit("调查停滞", "连续三轮没有取得新的工具结果，下一轮将整理现有证据并提交")
             continue
         outputs: dict[int, object] = {}
         resolved: dict[int, Tool] = {}
@@ -154,7 +175,64 @@ def investigate(
                         "error": f"{output_tool_name} 不能与研究工具在同一批调用；请先读取本批结果，下一轮再提交。"
                     }
 
-        research_indexes = [index for index, tool in resolved.items() if not tool.terminal]
+        research_indexes: list[int] = []
+        for index, tool in resolved.items():
+            if tool.terminal:
+                continue
+            call = calls[index]
+            skip_reason = tool.skip_reason(**call.arguments)
+            if skip_reason:
+                outputs[index] = {
+                    "skipped": True,
+                    "reason": skip_reason,
+                }
+                emit("工具跳过", f"{call.name} 未执行：{skip_reason}", call.arguments)
+                continue
+            if tool_ledger.is_blocked(call.name, call.arguments):
+                outputs[index] = {
+                    "error": (
+                        f"{call.name} 使用相同参数已经连续失败两次，本次不再执行。"
+                        "请更换参数或来源；无法继续时将问题写入 unresolved。"
+                    ),
+                    "skipped": True,
+                    "blocked": True,
+                }
+                emit("工具阻止", f"{call.name} 相同参数已连续失败，未再次执行", call.arguments)
+                continue
+            call_key = tool_ledger.key_for(call.name, call.arguments)
+            if call_key is not None and tool_ledger.is_compacted(call_key):
+                replay_allowed = tool.is_readonly and (
+                    tool.deterministic or tool.replay_after_compaction
+                )
+                cached = tool_ledger.result_for_key(call_key) if replay_allowed else None
+                if cached is not None:
+                    replayed = json.loads(cached)
+                    if isinstance(replayed, dict):
+                        replayed["_context_replay"] = {
+                            "restored": True,
+                            "message": "完整结果已从本次运行账本恢复，未重新访问外部来源。",
+                        }
+                    else:
+                        replayed = {"result": replayed, "_context_replay": {"restored": True}}
+                    outputs[index] = replayed
+                    tool_ledger.mark_restored(call.id, call_key)
+                    emit("上下文复用", f"已恢复 {call.name} 的历史完整结果，未重新执行", call.arguments)
+                    continue
+                # 旧值已经不再对模型可见，且该工具不允许恢复；必须重新执行，
+                # 不能落入下面的“查看前序 ToolMessage”分支。
+                research_indexes.append(index)
+                continue
+            if call_key is not None and tool_ledger.has_succeeded(call.name, call.arguments):
+                outputs[index] = {
+                    "skipped": True,
+                    "reason": (
+                        f"{call.name} 使用相同参数已经成功执行；结果仍在本次对话的前序 "
+                        "ToolMessage 中，请直接使用该结果继续分析。"
+                    ),
+                }
+                emit("复用上下文", f"{call.name} 相同参数的结果仍在前文，未重复执行", call.arguments)
+                continue
+            research_indexes.append(index)
         if finalize:
             for index in research_indexes:
                 outputs[index] = {"error": "调查预算已用尽，请提交结构化结果，未解决事项写入 unresolved。"}
@@ -166,14 +244,35 @@ def investigate(
             run["usage"]["tool_calls"] += len(allowed)
             if len(allowed) == 1:
                 index = allowed[0]
-                result_index, result = execute_research(index, calls[index], resolved[index])
+                result_index, result, success = execute_research(index, calls[index], resolved[index])
                 outputs[result_index] = result
+                if success:
+                    tool_ledger.record_success(
+                        calls[index].id,
+                        calls[index].name,
+                        calls[index].arguments,
+                        result,
+                    )
+                else:
+                    tool_ledger.record_failure(calls[index].name, calls[index].arguments)
             elif allowed:
                 with ThreadPoolExecutor(max_workers=min(budget.parallel_tools, len(allowed))) as pool:
                     futures = [pool.submit(execute_research, index, calls[index], resolved[index]) for index in allowed]
                     for future in futures:
-                        result_index, result = future.result()
+                        result_index, result, success = future.result()
                         outputs[result_index] = result
+                        if success:
+                            tool_ledger.record_success(
+                                calls[result_index].id,
+                                calls[result_index].name,
+                                calls[result_index].arguments,
+                                result,
+                            )
+                        else:
+                            tool_ledger.record_failure(
+                                calls[result_index].name,
+                                calls[result_index].arguments,
+                            )
 
         for index, call in enumerate(calls):
             output = outputs.get(index, {"error": "工具调用未执行。"})
@@ -181,6 +280,9 @@ def investigate(
                              "output": json.dumps(output, ensure_ascii=False)})
         if draft:
             break
+        if tool_ledger.finish_round() and not force_finalize_for_stall:
+            force_finalize_for_stall = True
+            emit("调查停滞", "连续三轮没有取得新的工具结果，下一轮将整理现有证据并提交")
     if draft is None:
         raise ValueError("调查预算内未生成有效结果；已保留过程和证据，请缩小问题后重试。")
     accepted_draft = draft

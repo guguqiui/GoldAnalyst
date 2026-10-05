@@ -98,8 +98,19 @@ def parse_html(data, url):
 
 class ReadURLTool(Tool):
     name = "read_url"
+    repeatable = True
+    replay_after_compaction = True
     description = "阅读公开网页或 PDF，保存正文及证据编号；失败不会返回伪造资料。"
     parameters = {"url": {"type": "string"}}
+
+    def skip_reason(self, **kwargs: object) -> str | None:
+        url = kwargs.get("url")
+        if isinstance(url, str) and self.context.is_excluded_source_url(url):
+            return (
+                "该 URL 已被前序 Agent 使用，不能作为新增交叉核验证据。"
+                "如需查看原文请调用 get_evidence；如需独立核验请调用 search_sources 查找另一篇文章。"
+            )
+        return None
 
     def execute(self, url):
         cached = self.context.get_cached(url)

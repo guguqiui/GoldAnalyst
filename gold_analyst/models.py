@@ -54,3 +54,6 @@ class RunState(TypedDict, total=False):
     findings: list[dict[str, object]]
     finding: dict[str, object]
     verification_result: dict[str, object]
+    original_question: str
+    context_manifest: dict[str, object]
+    excluded_source_urls: list[str]

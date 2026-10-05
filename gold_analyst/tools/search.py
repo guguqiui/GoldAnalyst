@@ -20,6 +20,7 @@ def _matches_domain(url: str, domains: list[str]) -> bool:
 
 class SearchSourcesTool(Tool):
     name = "search_sources"
+    repeatable = True
     description = (
         f"搜索并返回可继续阅读的来源，最多 {MAX_SEARCH_REQUESTS} 次。"
         "系统会根据查询自动选择黄金来源候选集；确定性结论应继续 read_url。"
@@ -40,10 +41,17 @@ class SearchSourcesTool(Tool):
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_RESULTS:
             raise ValueError(f"limit 必须是 1–{MAX_RESULTS} 的整数")
 
-        target_urls = urls_in_text(self.context.run.get("input", ""))
+        question = self.context.run.get(
+            "original_question", self.context.run.get("input", ""),
+        )
+        target_urls = urls_in_text(str(question))
         if target_urls & urls_in_text(query):
             raise ValueError("待核验链接不能作为搜索查询；请搜索文章中的具体说法或其他独立来源。")
-        excluded = target_urls
+        excluded = target_urls | {
+            canonical_url(url)
+            for url in self.context.run.get("excluded_source_urls", [])
+            if isinstance(url, str) and url
+        }
         universes = select_universes(query)
         candidates = ranked_sources(query)
         candidate_by_domain = {str(source["domain"]): source for source in candidates}

@@ -63,6 +63,7 @@ def _has_price(row: dict[str, str], category: str) -> bool:
 
 class SGEDataTool(Tool):
     name = "get_sge_data"
+    repeatable = True
     description = (
         "查询上金所历史行情。请求日无交易时自动返回此前最近交易日，并明确 requested_date 与 effective_date；"
         "daily 返回每日合约行情，benchmark 返回上海金基准价各轮次。"

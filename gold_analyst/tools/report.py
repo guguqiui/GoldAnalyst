@@ -7,6 +7,7 @@ STRING = {"type": "string"}
 
 class SubmitReportTool(Tool):
     name = "submit_report"
+    is_readonly = False
     description = "提交有证据编号的最终核验报告。"
     terminal = True
     parameters = {
@@ -21,7 +22,7 @@ class SubmitReportTool(Tool):
                     "statement": STRING,
                     "verdict": {
                         "type": "string",
-                        "enum": ["有证据支持", "部分成立／表述误导", "有证据反驳", "证据不足"],
+                        "enum": ["有证据支持", "部分成立", "有证据反驳", "证据不足"],
                     },
                     "reason": STRING,
                     "evidence_ids": {"type": "array", "items": STRING},

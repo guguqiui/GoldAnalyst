@@ -1,6 +1,5 @@
 """使用同一套 AgentLoop 运行一个有明确职责边界的专业 Agent。"""
 import json
-import copy
 from collections.abc import Callable
 
 from .agent import investigate
@@ -8,6 +7,7 @@ from .agent_specs import AgentSpec
 from .models import RunState
 from .schemas import Finding, PlanTask
 from .server_state import blank_run
+from .context import ContextBuilder
 
 
 SPECIALIST_SYSTEM = """你是 Gold Analyst 的专业研究 Agent，只完成分配给你的子任务。
@@ -72,31 +72,25 @@ def run_specialist(
     if task["agent"] != spec.role:
         raise ValueError(f"任务要求 {task['agent']}，不能交给 {spec.role} Agent")
 
-    payload = {
-        "question": parent["input"],
-        "task": task,
-        "market": parent.get("plan", {}).get("market", "") if isinstance(parent.get("plan"), dict) else "",
-        "time_intent": (
-            parent.get("plan", {}).get("time_intent", {})
-            if isinstance(parent.get("plan"), dict)
-            else {}
-        ),
-        "time_range": (
-            parent.get("plan", {}).get("time_range", {})
-            if isinstance(parent.get("plan"), dict)
-            else {}
-        ),
-        "dependency_findings": dependency_findings or [],
-        "dependency_evidence": dependency_evidence or [],
-    }
+    context = ContextBuilder().build_specialist_context(
+        parent, task, dependency_findings or [], dependency_evidence or [],
+    )
+    payload = context.payload
     child = blank_run(
         "multi",
         json.dumps(payload, ensure_ascii=False),
         "source_first",
         run_id=f"{parent['id']}-{task['id']}",
     )
+    child["original_question"] = parent["input"]
+    child["context_manifest"] = context.manifest
+    child["excluded_source_urls"] = [
+        str(item["url"])
+        for item in context.full_evidence
+        if isinstance(item.get("url"), str) and item.get("url")
+    ]
     child["findings"] = list(dependency_findings or [])
-    child["evidence"] = copy.deepcopy(dependency_evidence or [])
+    child["evidence"] = context.full_evidence
     allowed_tools = (
         _verification_tools(spec, child["findings"])
         if spec.role == "verification"

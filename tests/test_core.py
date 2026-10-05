@@ -12,8 +12,17 @@ from gold_analyst.multi_agent import AGENT_TOOLSETS, investigate_multi, merge_ca
 from gold_analyst.server import new_run
 from gold_analyst.sources.router import ranked_sources, select_universes
 from gold_analyst.sources.universes import SOURCE_TIERS, SOURCE_UNIVERSES
-from gold_analyst.tools import Tool, ToolContext, ToolRegistry, create_tool_registry, parse_html, validate_public_url
+from gold_analyst.tools import (
+    Tool,
+    ToolContext,
+    ToolRegistry,
+    create_tool_registry,
+    parse_html,
+    tool_call_key,
+    validate_public_url,
+)
 from gold_analyst.tools.calculator import CalculateChangeTool
+from gold_analyst.tools.sge import SGEDataTool
 from gold_analyst.verification import calculate_change, validate_report
 
 
@@ -131,8 +140,43 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(item["source_tier"], 4)
         self.assertEqual(item["evidence_usage"], "clue_only")
 
+    def test_read_url_only_skips_the_same_excluded_article(self):
+        run = new_run("live", "黄金", "source_first")
+        run["excluded_source_urls"] = ["https://www.example.com/article/?utm_source=old"]
+        read_url = create_tool_registry(run, lambda *a: None).get("read_url")
+
+        self.assertIn(
+            "前序 Agent",
+            read_url.skip_reason(url="https://example.com/article") or "",
+        )
+        self.assertIsNone(read_url.skip_reason(url="https://example.com/another-article"))
+
 
 class AgentTests(unittest.TestCase):
+    @patch("gold_analyst.tools.web.fetch")
+    def test_excluded_source_is_skipped_without_using_tool_budget(self, fake_fetch):
+        run = new_run("live", "核验原因", "source_first")
+        run["excluded_source_urls"] = ["https://example.com/original"]
+        client = FakeClient([
+            response(call("read_url", {"url": "https://www.example.com/original/?utm_source=test"}, 1)),
+            response(call("submit_report", report([]), 2)),
+            response(call("submit_report", report([]), 3)),
+        ])
+        events = []
+
+        result = investigate(run, lambda *args: events.append(args), client)
+
+        fake_fetch.assert_not_called()
+        self.assertEqual(result["usage"]["tool_calls"], 0)
+        skipped = [
+            item for item in client.requests[1]["input"]
+            if isinstance(item, dict)
+            and item.get("type") == "function_call_output"
+            and item.get("call_id") == "call1"
+        ]
+        self.assertIn("不能作为新增交叉核验证据", skipped[0]["output"])
+        self.assertTrue(any(event[0] == "工具跳过" for event in events))
+
     def test_custom_research_budget_controls_final_round(self):
         client = FakeClient([
             response(),
@@ -209,6 +253,166 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(run["usage"]["input_tokens"], 30)
         self.assertIn("模型审核完成", run["review_status"])
 
+    def test_identical_successful_call_uses_visible_previous_result(self):
+        executions = []
+        original_execute = CalculateChangeTool.execute
+
+        def tracked_execute(tool, current, previous):
+            executions.append((current, previous))
+            return original_execute(tool, current, previous)
+
+        client = FakeClient([
+            response(call("calculate_change", {"current": "620", "previous": "610"}, 1)),
+            response(call("calculate_change", {"previous": "610", "current": "620"}, 2)),
+            response(call("submit_report", report(), 3)),
+            response(call("submit_report", report(), 4)),
+        ])
+        with patch.object(CalculateChangeTool, "execute", tracked_execute):
+            run = investigate(new_run("live", "重复计算", "scope_first"), lambda *a: None, client)
+
+        duplicate_outputs = [
+            item for item in client.requests[2]["input"]
+            if isinstance(item, dict)
+            and item.get("type") == "function_call_output"
+            and item.get("call_id") == "call2"
+        ]
+        self.assertEqual(len(executions), 1)
+        self.assertEqual(run["usage"]["tool_calls"], 1)
+        self.assertEqual(len(run["evidence"]), 1)
+        self.assertIn("前序 ToolMessage", duplicate_outputs[0]["output"])
+
+    def test_identical_failed_call_may_retry(self):
+        executions = []
+        original_execute = CalculateChangeTool.execute
+
+        def tracked_execute(tool, current, previous):
+            executions.append((current, previous))
+            return original_execute(tool, current, previous)
+
+        client = FakeClient([
+            response(call("calculate_change", {"current": "620", "previous": "0"}, 1)),
+            response(call("calculate_change", {"current": "620", "previous": "0"}, 2)),
+            response(call("submit_report", report([]), 3)),
+            response(call("submit_report", report([]), 4)),
+        ])
+        with patch.object(CalculateChangeTool, "execute", tracked_execute):
+            run = investigate(new_run("live", "失败重试", "scope_first"), lambda *a: None, client)
+
+        self.assertEqual(len(executions), 2)
+        self.assertEqual(run["usage"]["tool_calls"], 2)
+
+    def test_third_identical_failure_is_blocked_without_using_budget(self):
+        executions = []
+        original_execute = CalculateChangeTool.execute
+
+        def tracked_execute(tool, current, previous):
+            executions.append((current, previous))
+            return original_execute(tool, current, previous)
+
+        bad_arguments = {"current": "620", "previous": "0"}
+        client = FakeClient([
+            response(call("calculate_change", bad_arguments, 1)),
+            response(call("calculate_change", bad_arguments, 2)),
+            response(call("calculate_change", bad_arguments, 3)),
+            response(call("submit_report", report([]), 4)),
+            response(call("submit_report", report([]), 5)),
+        ])
+        events = []
+        with patch.object(CalculateChangeTool, "execute", tracked_execute):
+            run = investigate(
+                new_run("live", "连续失败", "scope_first"),
+                lambda *args: events.append(args),
+                client,
+            )
+
+        blocked_outputs = [
+            item for item in client.requests[3]["input"]
+            if isinstance(item, dict)
+            and item.get("type") == "function_call_output"
+            and item.get("call_id") == "call3"
+        ]
+        self.assertEqual(len(executions), 2)
+        self.assertEqual(run["usage"]["tool_calls"], 2)
+        self.assertIn("连续失败两次", blocked_outputs[0]["output"])
+        self.assertTrue(any(event[0] == "工具阻止" for event in events))
+
+    def test_compacted_readonly_result_is_restored_without_execution(self):
+        executions = []
+        original_execute = CalculateChangeTool.execute
+
+        def tracked_execute(tool, current, previous):
+            executions.append((current, previous))
+            return original_execute(tool, current, previous)
+
+        first_arguments = {"current": "620", "previous": "610"}
+        client = FakeClient([
+            response(*[
+                call(
+                    "calculate_change",
+                    {"current": str(620 + index), "previous": "610"},
+                    index + 1,
+                )
+                for index in range(4)
+            ]),
+            response(call("calculate_change", first_arguments, 5)),
+            response(call("submit_report", report(), 6)),
+            response(call("submit_report", report(), 7)),
+        ])
+        events = []
+        with (
+            patch.object(CalculateChangeTool, "execute", tracked_execute),
+            patch("gold_analyst.agent.DYNAMIC_CONTEXT_CHAR_LIMIT", 1),
+            patch("gold_analyst.agent.KEEP_RECENT_TOOL_RESULTS", 1),
+        ):
+            run = investigate(
+                new_run("live", "压缩后重复计算", "scope_first"),
+                lambda *args: events.append(args),
+                client,
+            )
+
+        replay_outputs = [
+            item for item in client.requests[2]["input"]
+            if isinstance(item, dict)
+            and item.get("type") == "function_call_output"
+            and item.get("call_id") == "call5"
+        ]
+        self.assertEqual(len(executions), 4)
+        self.assertEqual(run["usage"]["tool_calls"], 4)
+        self.assertIn("_context_replay", replay_outputs[0]["output"])
+        self.assertTrue(any(event[0] == "上下文压缩" for event in events))
+        self.assertTrue(any(event[0] == "上下文复用" for event in events))
+
+    def test_compacted_non_replayable_result_is_executed_again(self):
+        executions = []
+
+        def tracked_execute(tool, trade_date, category, contract):
+            executions.append((trade_date, category, contract))
+            return {"trade_date": trade_date, "category": category, "contract": contract}
+
+        first_arguments = {"trade_date": "2026-09-27", "category": "daily", "contract": "Au99.99"}
+        client = FakeClient([
+            response(*[
+                call("get_sge_data", {
+                    "trade_date": f"2026-09-{27 + index:02d}",
+                    "category": "daily",
+                    "contract": "Au99.99",
+                }, index + 1)
+                for index in range(4)
+            ]),
+            response(call("get_sge_data", first_arguments, 5)),
+            response(call("submit_report", report([]), 6)),
+            response(call("submit_report", report([]), 7)),
+        ])
+        with (
+            patch.object(SGEDataTool, "execute", tracked_execute),
+            patch("gold_analyst.agent.DYNAMIC_CONTEXT_CHAR_LIMIT", 1),
+            patch("gold_analyst.agent.KEEP_RECENT_TOOL_RESULTS", 1),
+        ):
+            run = investigate(new_run("live", "压缩后刷新行情", "scope_first"), lambda *a: None, client)
+
+        self.assertEqual(len(executions), 5)
+        self.assertEqual(run["usage"]["tool_calls"], 5)
+
     def test_tool_failure_is_visible_to_model(self):
         r = report([])
         client = FakeClient([response(call("calculate_change", {"current": "620", "previous": "0"})),
@@ -236,6 +440,31 @@ class AgentTests(unittest.TestCase):
         model_results = [event for event in events if event[0] == "模型结果"]
         self.assertEqual(len(model_results), DEFAULT_RESEARCH_BUDGET.rounds + 2)
         self.assertEqual(model_results[final_index][2]["tool_calls"][0]["name"], "submit_report")
+
+    def test_three_no_progress_rounds_force_early_submission(self):
+        client = FakeClient([
+            response(),
+            response(),
+            response(),
+            response(call("submit_report", report([]), 4)),
+            response(call("submit_report", report([]), 5)),
+        ])
+        events = []
+        investigate(
+            new_run("live", "无进展调查", "scope_first"),
+            lambda *args: events.append(args),
+            client,
+        )
+
+        self.assertEqual(
+            client.requests[3]["tool_choice"],
+            {"type": "function", "name": "submit_report"},
+        )
+        self.assertEqual(
+            {tool["name"] for tool in client.requests[3]["tools"]},
+            {"submit_report"},
+        )
+        self.assertTrue(any(event[0] == "调查停滞" for event in events))
 
 
 class MultiAgentTests(unittest.TestCase):
@@ -287,6 +516,34 @@ class MultiAgentTests(unittest.TestCase):
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_tool_call_key_is_stable_and_parameter_sensitive(self):
+        first = tool_call_key("search_sources", {"query": "黄金", "limit": 10})
+        reordered = tool_call_key("search_sources", {"limit": 10, "query": "黄金"})
+        changed = tool_call_key("search_sources", {"query": "黄金", "limit": 20})
+        self.assertEqual(first, reordered)
+        self.assertNotEqual(first, changed)
+
+    def test_tool_call_key_normalizes_the_same_url(self):
+        first = tool_call_key("read_url", {"url": "https://www.example.com/a/?utm_source=x"})
+        same_article = tool_call_key("read_url", {"url": "https://example.com/a"})
+        other_article = tool_call_key("read_url", {"url": "https://example.com/b"})
+        self.assertEqual(first, same_article)
+        self.assertNotEqual(first, other_article)
+
+    def test_tool_call_key_refuses_unserializable_arguments(self):
+        self.assertIsNone(tool_call_key("read_url", {"url": object()}))
+
+    def test_tools_declare_context_reuse_policy(self):
+        registry = create_tool_registry(new_run("live", "黄金", "source_first"), lambda *a: None)
+        calculator = registry.get("calculate_change")
+        self.assertTrue(calculator.is_readonly)
+        self.assertTrue(calculator.repeatable)
+        self.assertTrue(calculator.deterministic)
+        reader = registry.get("read_url")
+        self.assertTrue(reader.repeatable)
+        self.assertTrue(reader.replay_after_compaction)
+        self.assertFalse(registry.get("submit_report").is_readonly)
+
     def test_search_rejects_the_target_url_as_query(self):
         target = "https://example.com/article?a=1&utm_source=test"
         registry = create_tool_registry(new_run("live", target, "source_first"), lambda *a: None)

@@ -2,6 +2,7 @@ import copy
 import json
 import unittest
 from types import SimpleNamespace as NS
+from unittest.mock import patch
 
 from gold_analyst.agent_specs import MARKET_AGENT, VERIFICATION_AGENT
 from gold_analyst.server import new_run
@@ -113,21 +114,74 @@ class SpecialistTests(unittest.TestCase):
             lambda *args: None,
             client,
             findings,
-            [{"id": "E1", "kind": "official_market_data", "source_tier": 1}],
+            [{
+                "id": "E1", "kind": "official_market_data", "source_tier": 1,
+                "url": "https://www.sge.com.cn/data",
+            }],
         )
 
         self.assertEqual(child["verification_result"]["status"], "passed")
         self.assertEqual(child["verification_result"]["fact_results"], submitted_verification["fact_results"])
         self.assertNotIn("finding", child)
         self.assertEqual(child["findings"], findings)
+        self.assertEqual(child["context_manifest"]["evidence_ids"], ["E1"])
+        self.assertEqual(child["excluded_source_urls"], ["https://www.sge.com.cn/data"])
         request = client.requests[0]
         self.assertEqual(
             {tool["name"] for tool in request["tools"]},
-            {"calculate_change", "submit_verification"},
+            {"get_evidence", "calculate_change", "submit_verification"},
         )
         self.assertNotIn("get_sge_data", {tool["name"] for tool in request["tools"]})
         payload = json.loads(request["input"][0]["content"])
         self.assertEqual(payload["dependency_findings"], findings)
+
+    @patch("gold_analyst.tools.web.fetch")
+    def test_verifier_can_correct_a_missing_new_evidence_citation(self, fake_fetch):
+        original_url = "https://reuters.com/original"
+        new_url = "https://bloomberg.com/corroboration"
+        fake_fetch.return_value = (
+            b"<html><h1>Gold</h1><article>This independent article contains enough text to verify the cause fact.</article></html>",
+            "text/html",
+            new_url,
+        )
+        findings = [{
+            "task_id": "cause", "agent": "cause", "status": "supported", "summary": "美元走弱",
+            "facts": [{
+                "fact_id": "cause.fact_1", "name": "美元走弱", "value": "推动金价", "unit": "事件", "note": "原因",
+            }],
+            "evidence_ids": ["E1"], "unresolved": [],
+        }]
+        missing_citation = {
+            "fact_results": [{
+                "fact_id": "cause.fact_1", "verdict": "supported", "reason": "已有交叉证据",
+                "supporting_evidence_ids": ["E1"], "contradicting_evidence_ids": [], "unresolved": [],
+            }],
+            "conflicts": [], "unresolved": [],
+        }
+        corrected = copy.deepcopy(missing_citation)
+        corrected["fact_results"][0]["supporting_evidence_ids"] = ["E1", "E2"]
+        responses = [
+            NS(output=[call("read_url", {"url": new_url})], usage=NS(input_tokens=8, output_tokens=4), status="completed"),
+            NS(output=[call("submit_verification", missing_citation)], usage=NS(input_tokens=8, output_tokens=4), status="completed"),
+            NS(output=[call("submit_verification", corrected)], usage=NS(input_tokens=8, output_tokens=4), status="completed"),
+        ]
+        client = FakeClient(responses)
+        task = {"id": "verification", "agent": "verification", "goal": "独立核验", "depends_on": ["cause"]}
+
+        child = run_specialist(
+            new_run("multi", "黄金为什么上涨", "source_first"),
+            task,
+            VERIFICATION_AGENT,
+            lambda *args: None,
+            client,
+            findings,
+            [{"id": "E1", "kind": "source", "url": original_url}],
+        )
+
+        self.assertEqual(child["verification_result"]["status"], "passed")
+        self.assertEqual(child["verification_result"]["fact_results"][0]["supporting_evidence_ids"], ["E1", "E2"])
+        correction_input = client.requests[2]["input"]
+        self.assertTrue(any("未引用已经读取" in item.get("output", "") for item in correction_input if isinstance(item, dict)))
 
     def test_verifier_does_not_invent_fact_when_findings_have_none(self):
         findings = [{

@@ -89,18 +89,37 @@ class SubmitVerificationToolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "contradicted 时必须"):
             SubmitVerificationTool(self.context()).execute(**contradicted)
 
-    def test_cause_supported_requires_new_independent_read_source(self):
+    def test_cause_with_unreferenced_new_article_is_rejected_for_correction(self):
         missing_new_source = self.result()
         missing_new_source["fact_results"][0]["supporting_evidence_ids"] = ["E1"]
-        with self.assertRaisesRegex(ValueError, "新增不同域名"):
+        with self.assertRaisesRegex(ValueError, "E2"):
             SubmitVerificationTool(self.context()).execute(**missing_new_source)
 
+    def test_cause_without_any_new_article_is_downgraded_instead_of_retried(self):
+        missing_new_source = self.result()
+        missing_new_source["fact_results"][0]["supporting_evidence_ids"] = ["E1"]
+        context = self.context()
+        context.run["evidence"] = [context.run["evidence"][0]]
+        result = SubmitVerificationTool(context).execute(**missing_new_source)
+        self.assertEqual(result["fact_results"][0]["verdict"], "partial")
+        self.assertIn("URL 不同的新文章", result["fact_results"][0]["reason"])
+
+    def test_same_domain_different_article_can_corroborate_cause(self):
         same_domain = self.result()
         same_domain["fact_results"][0]["supporting_evidence_ids"] = ["E1", "E2"]
         context = self.context()
         context.run["evidence"][1]["url"] = "https://www.reuters.com/another"
-        with self.assertRaisesRegex(ValueError, "新增不同域名"):
-            SubmitVerificationTool(context).execute(**same_domain)
+        result = SubmitVerificationTool(context).execute(**same_domain)
+        self.assertEqual(result["fact_results"][0]["verdict"], "supported")
+
+    def test_same_canonical_article_does_not_count_as_corroboration(self):
+        duplicate_article = self.result()
+        duplicate_article["fact_results"][0]["supporting_evidence_ids"] = ["E1", "E2"]
+        context = self.context()
+        context.run["evidence"][1]["url"] = "https://www.reuters.com/a?utm_source=test"
+        result = SubmitVerificationTool(context).execute(**duplicate_article)
+        self.assertEqual(result["fact_results"][0]["verdict"], "partial")
+        self.assertIn("URL 不同的新文章", result["fact_results"][0]["reason"])
 
     def test_market_supported_reuses_official_evidence(self):
         context = self.context()

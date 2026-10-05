@@ -1,23 +1,19 @@
 """核验 Agent 用来提交逐事实结果的终止型工具。"""
 from typing import cast
-from urllib.parse import urlsplit
 
 from ..schemas import VerificationResult
-from .base import Tool
+from .base import Tool, canonical_url
 
 
 STRING = {"type": "string"}
 VERDICTS = ["supported", "partial", "contradicted", "insufficient"]
 
 
-def _source_identity(evidence: dict[str, object]) -> str:
-    """用来源域名识别独立来源；无域名的计算和搜索摘要不算来源。"""
-    domain = evidence.get("source_domain")
-    if isinstance(domain, str) and domain.strip():
-        return domain.lower().removeprefix("www.")
+def _article_identity(evidence: dict[str, object]) -> str:
+    """用规范 URL 识别文章；同一网站的不同文章可分别参与核验。"""
     url = evidence.get("url")
     if isinstance(url, str) and url:
-        return (urlsplit(url).hostname or "").lower().removeprefix("www.")
+        return canonical_url(url)
     return ""
 
 
@@ -25,12 +21,13 @@ def _is_read_source(evidence: dict[str, object]) -> bool:
     return (
         evidence.get("kind") not in {"search", "calculation"}
         and evidence.get("evidence_usage") not in {"clue_only", "target_material"}
-        and bool(_source_identity(evidence))
+        and bool(_article_identity(evidence))
     )
 
 
 class SubmitVerificationTool(Tool):
     name = "submit_verification"
+    is_readonly = False
     description = "逐条提交前序 Fact 的核验结果、支持证据、反驳证据和未解决问题。"
     terminal = True
     parameters = {
@@ -129,32 +126,54 @@ class SubmitVerificationTool(Tool):
                 originals = original_evidence_by_fact.get(fact_id, set())
                 original_support = set(supporting) & originals
                 role = fact_roles.get(fact_id)
-                if not original_support:
+                if not original_support and role != "cause":
                     raise ValueError(f"Fact {fact_id} 必须保留前序 Agent 的原始证据")
                 if role == "market" and not any(
                     evidence_by_id[evidence_id].get("source_tier") == 1
                     for evidence_id in original_support
                 ):
                     raise ValueError(f"行情 Fact {fact_id} 判为 supported 时必须引用一级官方证据")
+                normalized_item = dict(item)
                 if role == "cause":
                     original_sources = {
-                        _source_identity(evidence_by_id[evidence_id])
+                        _article_identity(evidence_by_id[evidence_id])
                         for evidence_id in original_support
                         if _is_read_source(evidence_by_id[evidence_id])
                     }
                     corroborating_sources = {
-                        _source_identity(evidence_by_id[evidence_id])
+                        _article_identity(evidence_by_id[evidence_id])
                         for evidence_id in set(supporting) - originals
                         if _is_read_source(evidence_by_id[evidence_id])
                     }
+                    available_corroborating_ids = sorted(
+                        evidence_id
+                        for evidence_id, evidence in evidence_by_id.items()
+                        if evidence_id not in originals
+                        and _is_read_source(evidence)
+                        and _article_identity(evidence) not in original_sources
+                    )
+                    downgrade_reason = ""
                     if not original_sources:
-                        raise ValueError(f"原因 Fact {fact_id} 的原始支持证据必须是已阅读网页")
-                    if not (corroborating_sources - original_sources):
-                        raise ValueError(
-                            f"原因 Fact {fact_id} 判为 supported 时必须新增不同域名的已阅读来源"
-                        )
+                        downgrade_reason = "未引用前序 Agent 已阅读的原始文章"
+                    elif not (corroborating_sources - original_sources):
+                        if available_corroborating_ids:
+                            raise ValueError(
+                                f"Fact {fact_id} 判为 supported，但 supporting_evidence_ids "
+                                "未引用已经读取的 URL 不同的新文章："
+                                + "、".join(available_corroborating_ids)
+                                + "。若其中有文章支持该 Fact，请补充对应 Evidence ID；"
+                                "否则请改为 partial 或 insufficient。"
+                            )
+                        downgrade_reason = "未读取到 URL 不同的新文章进行交叉核验"
+                    if downgrade_reason:
+                        normalized_item["verdict"] = "partial"
+                        normalized_item["reason"] = str(normalized_item["reason"]) + "；" + downgrade_reason
+                        unresolved = list(cast(list[str], normalized_item["unresolved"]))
+                        if downgrade_reason not in unresolved:
+                            unresolved.append(downgrade_reason)
+                        normalized_item["unresolved"] = unresolved
             seen.add(fact_id)
-            normalized.append(dict(item))
+            normalized.append(normalized_item if verdict == "supported" else dict(item))
 
         unknown = seen - known_fact_ids
         if unknown:

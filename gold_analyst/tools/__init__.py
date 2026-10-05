@@ -2,8 +2,9 @@
 from collections.abc import Callable, Collection
 
 from ..models import RunState
-from .base import Tool, ToolContext, ToolRegistry
+from .base import Tool, ToolContext, ToolRegistry, tool_call_key
 from .calculator import CalculateChangeTool
+from .evidence import GetEvidenceTool
 from .finding import SubmitFindingTool
 from .report import SubmitReportTool
 from .search import SearchSourcesTool
@@ -23,6 +24,7 @@ def create_tool_registry(
     context = ToolContext(run=run, emit=emit, client=client, model=model)
     tools = [
         ReadURLTool(context),
+        GetEvidenceTool(context),
         SGEDataTool(context),
         CalculateChangeTool(context),
         SearchSourcesTool(context),
@@ -32,8 +34,8 @@ def create_tool_registry(
     ]
     if allowed_names is None:
         # Single-Agent 保持原工具集合；中间产物工具只能由专业 Agent 显式申请。
-        specialist_outputs = {"submit_finding", "submit_verification"}
-        return ToolRegistry(tool for tool in tools if tool.name not in specialist_outputs)
+        specialist_only = {"get_evidence", "submit_finding", "submit_verification"}
+        return ToolRegistry(tool for tool in tools if tool.name not in specialist_only)
     allowed = set(allowed_names)
     known = {tool.name for tool in tools}
     unknown = allowed - known
@@ -46,6 +48,8 @@ __all__ = [
     "Tool",
     "ToolContext",
     "ToolRegistry",
+    "GetEvidenceTool",
+    "tool_call_key",
     "SubmitFindingTool",
     "SubmitVerificationTool",
     "create_tool_registry",

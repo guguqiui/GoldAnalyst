@@ -10,6 +10,7 @@ from ..agent_specs import get_agent_spec
 from ..models import RunState
 from ..schemas import Finding, PlanTask, TaskPlan
 from ..specialist import run_specialist
+from ..context import ContextBuilder
 from .validation import validate_task_plan
 
 
@@ -58,10 +59,7 @@ def _dependency_context(
     completed: dict[str, RunState],
     evidence: list[dict[str, object]],
 ) -> tuple[list[Finding], list[dict[str, object]]]:
-    findings = [completed[task_id]["finding"] for task_id in task["depends_on"] if "finding" in completed[task_id]]
-    evidence_ids = {item for finding in findings for item in finding.get("evidence_ids", [])}
-    selected_evidence = [copy.deepcopy(item) for item in evidence if item.get("id") in evidence_ids]
-    return findings, selected_evidence
+    return ContextBuilder().dependency_context(task, completed, evidence)
 
 
 def _merge_child(run: RunState, child: RunState) -> None:

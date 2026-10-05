@@ -61,6 +61,22 @@ class MultiAgentSchemaTests(unittest.TestCase):
             ["cause.fact_1", "cause.fact_2"],
         )
 
+    def test_cause_finding_is_limited_to_three_core_facts(self):
+        facts = [
+            {"name": f"原因{i}", "value": "影响金价", "unit": "", "note": "来源"}
+            for i in range(1, 5)
+        ]
+        with self.assertRaisesRegex(ValueError, "最多提交3条"):
+            SubmitFindingTool(self.context()).execute(
+                task_id="cause",
+                agent="cause",
+                status="supported",
+                summary="四条原因",
+                facts=facts,
+                evidence_ids=["E1"],
+                unresolved=[],
+            )
+
     def test_invalid_fact_shape_is_rejected_before_assigning_id(self):
         with self.assertRaisesRegex(ValueError, "name、value、unit 和 note"):
             SubmitFindingTool(self.context()).execute(

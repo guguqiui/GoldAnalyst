@@ -14,6 +14,7 @@ class SubmitFindingTool(Tool):
     """结束一个专业 Agent 的任务，但不生成面向用户的最终报告。"""
 
     name = "submit_finding"
+    is_readonly = False
     description = "提交当前专业子任务的结构化发现、证据编号和未解决问题。"
     terminal = True
     parameters = {
@@ -60,6 +61,8 @@ class SubmitFindingTool(Tool):
         unresolved = finding.get("unresolved")
         if not isinstance(facts, list) or not isinstance(unresolved, list):
             raise ValueError("facts 和 unresolved 必须是数组")
+        if finding.get("agent") == "cause" and len(facts) > 3:
+            raise ValueError("原因研究员最多提交3条核心原因 Fact，请合并同一机制并按重要性排序")
 
         # fact_id 由程序生成，不让模型决定，避免重复、遗漏或随意改名。
         task_id = str(finding["task_id"]).strip()

@@ -43,10 +43,11 @@ MARKET_AGENT = AgentSpec(
 CAUSE_AGENT = AgentSpec(
     name="原因研究员",
     role="cause",
-    prompt_version="cause-v1",
+    prompt_version="cause-v2",
     instruction=(
         "只负责调查指定时间范围内黄金上涨或下跌的原因。优先读取原始机构资料，区分事实、"
-        "相关性和推测；不得自行计算或编造行情涨幅。"
+        "相关性和推测；不得自行计算或编造行情涨幅。最多提交3条最重要的原因 Fact，按重要性排序；"
+        "同一机制的数字和解释应合并为一条 Fact，不要拆成多个待核验事实。"
     ),
     allowed_tools=frozenset({"search_sources", "read_url", "submit_finding"}),
     budget=ResearchBudget(rounds=6, tool_calls=12, parallel_tools=3, duration_seconds=240),
@@ -56,19 +57,25 @@ CAUSE_AGENT = AgentSpec(
 VERIFICATION_AGENT = AgentSpec(
     name="独立核验员",
     role="verification",
-    prompt_version="verification-v3",
+    prompt_version="verification-v6",
     instruction=(
         "按事实类型核验行情与原因研究员提交的发现。行情事实若已有一级官方来源，不再重新取数；"
         "只检查日期、品种、单位，并可用 calculate_change 复算。原因事实必须保留原始证据，"
-        "再搜索并阅读至少一个与原证据不同域名的独立来源，才可判为 supported。"
+        "再搜索并阅读至少一篇 URL 不同的新文章，才可判为 supported；同一网站的不同文章可以使用，"
+        "但不得重复读取同一 URL 并把它当作新证据。3条以内的原因 Fact 必须全部核验。"
+        "每条 Cause Fact 应分别设计精确的 search_sources 查询，不要把多个不同原因合并成一次宽泛搜索。"
         "必须先使用输入中的 dependency_findings 与 dependency_evidence；它们就是待核验上下文。"
-        "搜索结果摘要只是线索，必须 read_url 后才能作为独立核验证据。"
+        "context_manifest.truncated_evidence_ids 中的证据正文不完整时，先调用 get_evidence 读取本地完整证据，"
+        "不得因此重新访问原 URL。"
+        "搜索结果摘要只是线索，必须 read_url 后才能作为独立核验证据；若新文章支持某条 Fact，"
+        "submit_verification 的 supporting_evidence_ids 必须引用 read_url 新生成的 Evidence ID，"
+        "不能只引用搜索结果 Evidence。若新文章不支持，则将该 Fact 标为 partial 或 insufficient。"
         "可以重新计算，但不得为了多数意见而忽略证据冲突。"
         "价格比较必须确认两期数据的 contract 完全相同；不同合约之间不得计算涨跌。"
         "必须按 fact_id 逐条核验，每条 Fact 恰好返回一个结果。"
     ),
     allowed_tools=frozenset({
-        "search_sources", "read_url", "calculate_change", "submit_verification",
+        "get_evidence", "search_sources", "read_url", "calculate_change", "submit_verification",
     }),
     budget=ResearchBudget(rounds=6, tool_calls=12, parallel_tools=3, duration_seconds=240),
     output_tool="submit_verification",

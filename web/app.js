@@ -4,6 +4,7 @@ const sampleURL = 'https://invest.10jqka.com.cn/20260824/c679225891.shtml';
 let mode = 'demo', busy = false, active = null, liveInput = sampleURL;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safeURL = (u) => { try { const p = new URL(u); return ['https:','http:'].includes(p.protocol) ? p.href : ''; } catch { return ''; } };
+const verdictLabel = (verdict) => verdict === '部分成立／表述误导' ? '部分成立' : verdict;
 
 async function request(url, options) {
   const res = await fetch(url, options); const data = await res.json();
@@ -71,7 +72,7 @@ function render(run) {
     $('summary').textContent = run.report.summary;
     $('candidates-section').classList.toggle('hidden', !run.candidates?.length);
     $('candidates').innerHTML = (run.candidates || []).map(c => `<article class="candidate"><div><b>${esc(c.strategy_name)}</b><span class="badge ${c.status === 'failed' ? 'red' : ''}">${esc(c.status === 'completed' ? '已完成' : '受阻')}</span></div><p>${esc(c.report?.summary || c.error || '没有生成候选报告')}</p><small>${esc(c.evidence_count)} 条证据 · ${esc(c.usage?.tool_calls || 0)} 次工具 · ${esc((c.usage?.input_tokens || 0) + (c.usage?.output_tokens || 0))} tokens</small></article>`).join('');
-    $('claims').innerHTML = run.report.claims.map((c,i) => `<article class="claim"><div class="claim-top"><h4>${i+1}. ${esc(c.statement)}</h4><span class="badge ${c.verdict === '有证据反驳' ? 'red' : c.verdict !== '有证据支持' ? 'amber' : ''}">${esc(c.verdict)}</span></div><p>${esc(c.reason)}</p>${c.evidence_ids.map(id => `<a class="ref" href="#source-${esc(id)}">${esc(id)} ↗</a>`).join('')}</article>`).join('');
+    $('claims').innerHTML = run.report.claims.map((c,i) => `<article class="claim"><div class="claim-top"><h4>${i+1}. ${esc(c.statement)}</h4><span class="badge ${c.verdict === '有证据反驳' ? 'red' : c.verdict !== '有证据支持' ? 'amber' : ''}">${esc(verdictLabel(c.verdict))}</span></div><p>${esc(c.reason)}</p>${c.evidence_ids.map(id => `<a class="ref" href="#source-${esc(id)}">${esc(id)} ↗</a>`).join('')}</article>`).join('');
     $('unresolved').innerHTML = run.report.unresolved.map(t => `<li>${esc(t)}</li>`).join('') || '<li>未记录其他问题；这不代表结论绝对正确。</li>';
     $('review').textContent = run.report.review;
     $('validation').textContent = run.report.validation_notes?.join(' ') || '';

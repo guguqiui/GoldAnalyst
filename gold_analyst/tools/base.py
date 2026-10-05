@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from _thread import LockType
 from threading import Lock
+import json
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -12,7 +13,7 @@ from ..persistence.reports import now
 
 
 def canonical_url(url: str) -> str:
-    """忽略 fragment、尾部斜线和跟踪参数，识别同一个网页。"""
+    """忽略 www、fragment、尾部斜线和跟踪参数，识别同一个网页。"""
     try:
         parts = urlsplit(url)
     except ValueError:
@@ -21,13 +22,48 @@ def canonical_url(url: str) -> str:
         (key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
         if not key.lower().startswith("utm_")
     ))
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), query, ""))
+    host = parts.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return urlunsplit((parts.scheme.lower(), host, parts.path.rstrip("/"), query, ""))
 
 
 def urls_in_text(text: str) -> set[str]:
     """提取用户明确给出的 URL；它们是待核验材料，不是独立核验证据。"""
     matches = re.findall(r"https?://[^\s<>\"'\u3000\u4e00-\u9fff]+", text)
     return {canonical_url(url.rstrip(".,;:!?，。；：！？)]}）】")) for url in matches}
+
+
+def _normalize_call_value(value: object, field: str = "") -> object:
+    """规范化工具参数；只处理不改变参数语义的差异。"""
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalize_call_value(item, str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_call_value(item) for item in value]
+    if field == "url" and isinstance(value, str):
+        return canonical_url(value)
+    return value
+
+
+def tool_call_key(
+    tool_name: str,
+    arguments: Mapping[str, object],
+) -> tuple[str, str] | None:
+    """返回稳定的 ``(工具名, 参数 JSON)``；无法序列化时不生成身份。"""
+    try:
+        canonical_arguments = json.dumps(
+            _normalize_call_value(arguments),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return None
+    return tool_name, canonical_arguments
 
 
 @dataclass
@@ -42,7 +78,17 @@ class ToolContext:
     lock: LockType = field(default_factory=Lock, repr=False)
 
     def is_target_url(self, url: str) -> bool:
-        return bool(url) and canonical_url(url) in urls_in_text(self.run.get("input", ""))
+        question = self.run.get("original_question", self.run.get("input", ""))
+        return bool(url) and canonical_url(url) in urls_in_text(str(question))
+
+    def is_excluded_source_url(self, url: str) -> bool:
+        """判断 URL 是否属于前序 Agent 已经使用过的证据文章。"""
+        excluded = {
+            canonical_url(item)
+            for item in self.run.get("excluded_source_urls", [])
+            if isinstance(item, str) and item
+        }
+        return bool(url) and canonical_url(url) in excluded
 
     def add_evidence(
         self,
@@ -81,15 +127,27 @@ class ToolContext:
 
 
 class Tool(ABC):
-    """工具基类：给模型看的 schema 与真正执行的 Python 方法放在一起。"""
+    """工具基类：schema、执行方法以及上下文复用策略放在一起。"""
 
     name: str
     description: str
     parameters: Mapping[str, object]
     terminal: bool = False
+    # 是否只读取外部世界；写操作成功后，未来的只读缓存应全部失效。
+    is_readonly: bool = True
+    # 是否允许模型在正常流程中用相同或不同参数再次调用。
+    repeatable: bool = False
+    # 相同参数是否始终产生同一个逻辑结果，可直接复用确定性缓存。
+    deterministic: bool = False
+    # 非确定性只读结果从消息中消失后，是否允许恢复本次 run 的旧结果。
+    replay_after_compaction: bool = False
 
     def __init__(self, context: ToolContext):
         self.context = context
+
+    def skip_reason(self, **kwargs: object) -> str | None:
+        """执行前的确定性拦截；返回原因时不执行工具，也不消耗预算。"""
+        return None
 
     def schema(self) -> dict[str, object]:
         """生成 OpenAI Responses API 所需的 function tool schema。"""

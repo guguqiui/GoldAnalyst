@@ -7,6 +7,8 @@ from ..verification import calculate_change
 
 class CalculateChangeTool(Tool):
     name = "calculate_change"
+    repeatable = True
+    deterministic = True
     description = "计算两个正价格的价差和涨跌百分比。不能用计算结果证明输入价格真实性。"
     parameters = {
         "current": {"type": "string"},

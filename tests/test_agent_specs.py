@@ -29,20 +29,24 @@ class AgentSpecTests(unittest.TestCase):
         self.assertIn("search_sources", CAUSE_AGENT.allowed_tools)
         self.assertNotIn("calculate_change", CAUSE_AGENT.allowed_tools)
         self.assertTrue(
-            {"search_sources", "read_url", "calculate_change"}
+            {"get_evidence", "search_sources", "read_url", "calculate_change"}
             <= VERIFICATION_AGENT.allowed_tools
         )
         self.assertNotIn("get_sge_data", VERIFICATION_AGENT.allowed_tools)
 
     def test_get_agent_spec_returns_stable_configuration(self):
         self.assertIs(get_agent_spec("market"), MARKET_AGENT)
-        self.assertEqual(get_agent_spec("cause").prompt_version, "cause-v1")
+        self.assertEqual(get_agent_spec("cause").prompt_version, "cause-v2")
 
     def test_market_reuses_price_pair_and_verifier_reuses_dependency_context(self):
         self.assertIn("不得为了取得 previous_rows 再查询相邻日期", MARKET_AGENT.instruction)
         self.assertIn("dependency_findings", VERIFICATION_AGENT.instruction)
         self.assertIn("行情事实若已有一级官方来源，不再重新取数", VERIFICATION_AGENT.instruction)
-        self.assertIn("不同域名的独立来源", VERIFICATION_AGENT.instruction)
+        self.assertIn("URL 不同的新文章", VERIFICATION_AGENT.instruction)
+        self.assertIn("分别设计精确的 search_sources 查询", VERIFICATION_AGENT.instruction)
+        self.assertIn("新生成的 Evidence ID", VERIFICATION_AGENT.instruction)
+        self.assertIn("get_evidence", VERIFICATION_AGENT.instruction)
+        self.assertIn("最多提交3条", CAUSE_AGENT.instruction)
 
     def test_each_spec_can_build_its_exact_tool_registry(self):
         for spec in AGENT_SPECS.values():
