@@ -99,7 +99,13 @@ def _merge_child(run: RunState, child: RunState) -> None:
         child["finding"] = finding
         run.setdefault("findings", []).append(finding)
     if "verification_result" in child:
-        run["verification_result"] = copy.deepcopy(child["verification_result"])
+        verification = copy.deepcopy(child["verification_result"])
+        for fact_result in verification.get("fact_results", []):
+            for field in ("supporting_evidence_ids", "contradicting_evidence_ids"):
+                fact_result[field] = [
+                    id_map.get(item, item) for item in fact_result.get(field, [])
+                ]
+        run["verification_result"] = verification
 
     for key in run["usage"]:
         run["usage"][key] += child["usage"][key]

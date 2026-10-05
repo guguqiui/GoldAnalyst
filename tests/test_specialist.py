@@ -42,8 +42,18 @@ class SpecialistTests(unittest.TestCase):
         client = FakeClient([response])
         task = {"id": "market", "agent": "market", "goal": "计算涨幅", "depends_on": []}
 
+        parent = new_run("multi", "最近黄金上涨了多少", "source_first")
+        parent["plan"] = {
+            "market": "china_spot",
+            "time_intent": {
+                "mode": "latest_available", "anchor_date": "2026-10-05",
+                "window_value": 0, "window_unit": "none",
+                "comparison": "previous_trading_day",
+            },
+            "time_range": {"start": "2026-10-05", "end": "2026-10-05"},
+        }
         child = run_specialist(
-            new_run("multi", "最近黄金上涨了多少", "source_first"),
+            parent,
             task,
             MARKET_AGENT,
             lambda *args: None,
@@ -53,11 +63,15 @@ class SpecialistTests(unittest.TestCase):
         self.assertEqual(child["finding"]["task_id"], "market")
         self.assertEqual(child["review_status"], "专业发现待独立核验")
         self.assertEqual(child["strategy"], "market")
-        self.assertEqual(child["strategy_version"], "market-v1")
+        self.assertEqual(child["strategy_version"], "market-v2")
         request = client.requests[0]
         self.assertEqual({tool["name"] for tool in request["tools"]}, set(MARKET_AGENT.allowed_tools))
         self.assertNotIn("submit_report", {tool["name"] for tool in request["tools"]})
         self.assertIn(MARKET_AGENT.instruction, request["instructions"])
+        payload = json.loads(request["input"][0]["content"])
+        self.assertEqual(payload["market"], "china_spot")
+        self.assertEqual(payload["time_intent"]["mode"], "latest_available")
+        self.assertEqual(payload["time_range"], {"start": "2026-10-05", "end": "2026-10-05"})
 
     def test_specialist_prompt_has_shared_and_role_specific_rules(self):
         prompt = build_specialist_prompt(MARKET_AGENT)
@@ -99,7 +113,7 @@ class SpecialistTests(unittest.TestCase):
             lambda *args: None,
             client,
             findings,
-            [{"id": "E1", "kind": "calculation"}],
+            [{"id": "E1", "kind": "official_market_data", "source_tier": 1}],
         )
 
         self.assertEqual(child["verification_result"]["status"], "passed")
@@ -107,9 +121,44 @@ class SpecialistTests(unittest.TestCase):
         self.assertNotIn("finding", child)
         self.assertEqual(child["findings"], findings)
         request = client.requests[0]
-        self.assertEqual({tool["name"] for tool in request["tools"]}, set(VERIFICATION_AGENT.allowed_tools))
+        self.assertEqual(
+            {tool["name"] for tool in request["tools"]},
+            {"calculate_change", "submit_verification"},
+        )
+        self.assertNotIn("get_sge_data", {tool["name"] for tool in request["tools"]})
         payload = json.loads(request["input"][0]["content"])
         self.assertEqual(payload["dependency_findings"], findings)
+
+    def test_verifier_does_not_invent_fact_when_findings_have_none(self):
+        findings = [{
+            "task_id": "market",
+            "agent": "market",
+            "status": "insufficient",
+            "summary": "没有取得价格数据",
+            "facts": [],
+            "evidence_ids": ["E1"],
+            "unresolved": ["请求日期没有可核验行情"],
+        }]
+        client = FakeClient([])
+        events = []
+        task = {"id": "verification", "agent": "verification", "goal": "独立核验", "depends_on": ["market"]}
+
+        child = run_specialist(
+            new_run("multi", "黄金价格是多少", "source_first"),
+            task,
+            VERIFICATION_AGENT,
+            lambda *args: events.append(args),
+            client,
+            findings,
+            [{"id": "E1", "kind": "source"}],
+        )
+
+        result = child["verification_result"]
+        self.assertEqual(result["status"], "insufficient")
+        self.assertEqual(result["fact_results"], [])
+        self.assertIn("请求日期没有可核验行情", result["unresolved"])
+        self.assertEqual(client.requests, [])
+        self.assertIn("没有可核验 Fact", events[0][1])
 
     def test_task_cannot_be_given_to_wrong_agent(self):
         task = {"id": "cause", "agent": "cause", "goal": "调查原因", "depends_on": []}

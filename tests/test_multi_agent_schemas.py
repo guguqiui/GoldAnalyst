@@ -17,6 +17,10 @@ class MultiAgentSchemaTests(unittest.TestCase):
         plan: TaskPlan = {
             "question": "最近黄金上涨了多少，为什么上涨",
             "market": "china_spot",
+            "time_intent": {
+                "mode": "date_range", "anchor_date": "2026-10-04",
+                "window_value": 0, "window_unit": "none", "comparison": "range_start",
+            },
             "time_range": {"start": "2026-09-04", "end": "2026-10-04"},
             "tasks": [
                 {"id": "market", "agent": "market", "goal": "计算涨幅", "depends_on": []},

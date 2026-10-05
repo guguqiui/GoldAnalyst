@@ -3,6 +3,12 @@ from typing import Literal, TypedDict
 
 
 AgentRole = Literal["market", "cause", "verification"]
+TimeMode = Literal[
+    "exact_date", "date_range", "latest_available", "rolling_window",
+    "year_to_date", "unspecified",
+]
+TimeUnit = Literal["none", "day", "week", "month", "year"]
+TimeComparison = Literal["none", "previous_trading_day", "range_start"]
 FindingStatus = Literal["supported", "partial", "contradicted", "insufficient"]
 VerificationStatus = Literal["passed", "partial", "failed", "insufficient"]
 FactVerdict = Literal["supported", "partial", "contradicted", "insufficient"]
@@ -11,6 +17,16 @@ FactVerdict = Literal["supported", "partial", "contradicted", "insufficient"]
 class TimeRange(TypedDict):
     start: str
     end: str
+
+
+class TimeIntent(TypedDict):
+    """模型识别语义，程序填充日期与比较口径后的统一时间协议。"""
+
+    mode: TimeMode
+    anchor_date: str
+    window_value: int
+    window_unit: TimeUnit
+    comparison: TimeComparison
 
 
 class PlanTask(TypedDict):
@@ -25,6 +41,7 @@ class TaskPlan(TypedDict):
 
     question: str
     market: str
+    time_intent: TimeIntent
     time_range: TimeRange
     tasks: list[PlanTask]
 

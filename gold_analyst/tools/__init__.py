@@ -21,10 +21,9 @@ def create_tool_registry(
 ) -> ToolRegistry:
     """绑定工具；Multi-Agent 可用白名单形成真正的能力边界。"""
     context = ToolContext(run=run, emit=emit, client=client, model=model)
-    read_url = ReadURLTool(context)
     tools = [
-        read_url,
-        SGEDataTool(context, read_url),
+        ReadURLTool(context),
+        SGEDataTool(context),
         CalculateChangeTool(context),
         SearchSourcesTool(context),
         SubmitReportTool(context),

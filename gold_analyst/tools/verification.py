@@ -1,5 +1,6 @@
 """核验 Agent 用来提交逐事实结果的终止型工具。"""
 from typing import cast
+from urllib.parse import urlsplit
 
 from ..schemas import VerificationResult
 from .base import Tool
@@ -7,6 +8,25 @@ from .base import Tool
 
 STRING = {"type": "string"}
 VERDICTS = ["supported", "partial", "contradicted", "insufficient"]
+
+
+def _source_identity(evidence: dict[str, object]) -> str:
+    """用来源域名识别独立来源；无域名的计算和搜索摘要不算来源。"""
+    domain = evidence.get("source_domain")
+    if isinstance(domain, str) and domain.strip():
+        return domain.lower().removeprefix("www.")
+    url = evidence.get("url")
+    if isinstance(url, str) and url:
+        return (urlsplit(url).hostname or "").lower().removeprefix("www.")
+    return ""
+
+
+def _is_read_source(evidence: dict[str, object]) -> bool:
+    return (
+        evidence.get("kind") not in {"search", "calculation"}
+        and evidence.get("evidence_usage") not in {"clue_only", "target_material"}
+        and bool(_source_identity(evidence))
+    )
 
 
 class SubmitVerificationTool(Tool):
@@ -46,15 +66,28 @@ class SubmitVerificationTool(Tool):
         fact_results = result.get("fact_results")
         if not isinstance(fact_results, list):
             raise ValueError("fact_results 必须是数组")
-        known_fact_ids = {
-            str(fact.get("fact_id"))
+        fact_roles = {
+            str(fact.get("fact_id")): str(finding.get("agent", ""))
             for finding in self.context.run.get("findings", [])
             if isinstance(finding, dict)
             for fact in finding.get("facts", [])
             if isinstance(fact, dict) and fact.get("fact_id")
         }
-        known_evidence_ids = {
-            str(item.get("id")) for item in self.context.run.get("evidence", []) if isinstance(item, dict)
+        known_fact_ids = set(fact_roles)
+        evidence_by_id = {
+            str(item.get("id")): item
+            for item in self.context.run.get("evidence", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        known_evidence_ids = set(evidence_by_id)
+        original_evidence_by_fact = {
+            str(fact.get("fact_id")): {
+                str(evidence_id) for evidence_id in finding.get("evidence_ids", [])
+            }
+            for finding in self.context.run.get("findings", [])
+            if isinstance(finding, dict)
+            for fact in finding.get("facts", [])
+            if isinstance(fact, dict) and fact.get("fact_id")
         }
         seen: set[str] = set()
         normalized: list[dict[str, object]] = []
@@ -92,6 +125,34 @@ class SubmitVerificationTool(Tool):
                 raise ValueError(f"Fact {fact_id} 判为 contradicted 时必须有反驳证据")
             if verdict == "partial" and not supporting and not contradicting:
                 raise ValueError(f"Fact {fact_id} 判为 partial 时必须有证据")
+            if verdict == "supported":
+                originals = original_evidence_by_fact.get(fact_id, set())
+                original_support = set(supporting) & originals
+                role = fact_roles.get(fact_id)
+                if not original_support:
+                    raise ValueError(f"Fact {fact_id} 必须保留前序 Agent 的原始证据")
+                if role == "market" and not any(
+                    evidence_by_id[evidence_id].get("source_tier") == 1
+                    for evidence_id in original_support
+                ):
+                    raise ValueError(f"行情 Fact {fact_id} 判为 supported 时必须引用一级官方证据")
+                if role == "cause":
+                    original_sources = {
+                        _source_identity(evidence_by_id[evidence_id])
+                        for evidence_id in original_support
+                        if _is_read_source(evidence_by_id[evidence_id])
+                    }
+                    corroborating_sources = {
+                        _source_identity(evidence_by_id[evidence_id])
+                        for evidence_id in set(supporting) - originals
+                        if _is_read_source(evidence_by_id[evidence_id])
+                    }
+                    if not original_sources:
+                        raise ValueError(f"原因 Fact {fact_id} 的原始支持证据必须是已阅读网页")
+                    if not (corroborating_sources - original_sources):
+                        raise ValueError(
+                            f"原因 Fact {fact_id} 判为 supported 时必须新增不同域名的已阅读来源"
+                        )
             seen.add(fact_id)
             normalized.append(dict(item))
 

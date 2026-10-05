@@ -8,13 +8,18 @@ class SubmitVerificationToolTests(unittest.TestCase):
     def context(self):
         run = {
             "input": "核验黄金调查",
-            "evidence": [{"id": "E1"}, {"id": "E2"}],
+            "evidence": [
+                {"id": "E1", "kind": "source", "url": "https://reuters.com/a"},
+                {"id": "E2", "kind": "source", "url": "https://bloomberg.com/b"},
+            ],
             "findings": [{
                 "task_id": "cause",
+                "agent": "cause",
                 "facts": [
                     {"fact_id": "cause.fact_1", "name": "美元走弱"},
                     {"fact_id": "cause.fact_2", "name": "地缘风险"},
                 ],
+                "evidence_ids": ["E1"],
             }],
             "usage": {"input_tokens": 0, "output_tokens": 0, "tool_calls": 0, "search_requests": 0},
         }
@@ -25,7 +30,8 @@ class SubmitVerificationToolTests(unittest.TestCase):
             "fact_results": [
                 {
                     "fact_id": "cause.fact_1", "verdict": "supported", "reason": "有原始来源",
-                    "supporting_evidence_ids": ["E1"], "contradicting_evidence_ids": [], "unresolved": [],
+                    "supporting_evidence_ids": ["E1", "E2"],
+                    "contradicting_evidence_ids": [], "unresolved": [],
                 },
                 {
                     "fact_id": "cause.fact_2", "verdict": "insufficient", "reason": "缺少独立来源",
@@ -82,3 +88,35 @@ class SubmitVerificationToolTests(unittest.TestCase):
         contradicted["fact_results"][0]["supporting_evidence_ids"] = []
         with self.assertRaisesRegex(ValueError, "contradicted 时必须"):
             SubmitVerificationTool(self.context()).execute(**contradicted)
+
+    def test_cause_supported_requires_new_independent_read_source(self):
+        missing_new_source = self.result()
+        missing_new_source["fact_results"][0]["supporting_evidence_ids"] = ["E1"]
+        with self.assertRaisesRegex(ValueError, "新增不同域名"):
+            SubmitVerificationTool(self.context()).execute(**missing_new_source)
+
+        same_domain = self.result()
+        same_domain["fact_results"][0]["supporting_evidence_ids"] = ["E1", "E2"]
+        context = self.context()
+        context.run["evidence"][1]["url"] = "https://www.reuters.com/another"
+        with self.assertRaisesRegex(ValueError, "新增不同域名"):
+            SubmitVerificationTool(context).execute(**same_domain)
+
+    def test_market_supported_reuses_official_evidence(self):
+        context = self.context()
+        context.run["findings"] = [{
+            "task_id": "market", "agent": "market", "evidence_ids": ["E1"],
+            "facts": [{"fact_id": "market.fact_1", "name": "收盘价"}],
+        }]
+        context.run["evidence"] = [{
+            "id": "E1", "kind": "official_market_data", "source_tier": 1,
+            "url": "https://www.sge.com.cn/sjzx/mrhqsj",
+        }]
+        result = {
+            "fact_results": [{
+                "fact_id": "market.fact_1", "verdict": "supported", "reason": "官方数据完整",
+                "supporting_evidence_ids": ["E1"], "contradicting_evidence_ids": [], "unresolved": [],
+            }],
+            "conflicts": [], "unresolved": [],
+        }
+        self.assertEqual(SubmitVerificationTool(context).execute(**result)["status"], "passed")
