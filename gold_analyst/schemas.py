@@ -11,7 +11,9 @@ TimeUnit = Literal["none", "day", "week", "month", "year"]
 TimeComparison = Literal["none", "previous_trading_day", "range_start"]
 FindingStatus = Literal["supported", "partial", "contradicted", "insufficient"]
 VerificationStatus = Literal["passed", "partial", "failed", "insufficient"]
-FactVerdict = Literal["supported", "partial", "contradicted", "insufficient"]
+FactVerdict = Literal[
+    "supported", "partial", "uncorroborated", "contradicted", "insufficient",
+]
 
 
 class TimeRange(TypedDict):

@@ -166,7 +166,7 @@ class SubmitVerificationTool(Tool):
                             )
                         downgrade_reason = "未读取到 URL 不同的新文章进行交叉核验"
                     if downgrade_reason:
-                        normalized_item["verdict"] = "partial"
+                        normalized_item["verdict"] = "uncorroborated"
                         normalized_item["reason"] = str(normalized_item["reason"]) + "；" + downgrade_reason
                         unresolved = list(cast(list[str], normalized_item["unresolved"]))
                         if downgrade_reason not in unresolved:

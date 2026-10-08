@@ -90,6 +90,24 @@ class TaskPlannerTests(unittest.TestCase):
         self.assertIn("上涨了多少", PLANNER_INSTRUCTIONS)
         self.assertIn("不得因为问题中出现“上涨”就自动选择 cause", PLANNER_INSTRUCTIONS)
 
+    def test_followup_history_is_sent_before_the_current_question(self):
+        client = planner_client(["cause"])
+        history = [
+            {"role": "user", "content": "九月金价为什么下跌？"},
+            {"role": "assistant", "content": "主要有三个原因，第二个是ETF流出。"},
+        ]
+
+        create_task_plan(
+            "第二个原因有什么证据？",
+            client,
+            today=date(2026, 10, 6),
+            conversation_history=history,
+        )
+
+        inputs = client.requests[0]["input"]
+        self.assertEqual(inputs[:2], history)
+        self.assertIn("第二个原因有什么证据", inputs[-1]["content"])
+
     def test_recent_is_resolved_to_current_date_instead_of_model_guess(self):
         plan = create_task_plan(
             "黄金价格最近如何变化",

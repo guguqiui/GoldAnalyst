@@ -1,42 +1,60 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Gold Analyst · 黄金信息调查员</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gold Analyst</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/report.css">
+  <script defer src="/app.js"></script>
+</head>
 <body>
-<header class="top"><a class="brand" href="/"><span class="mark">Au</span><span>Gold Analyst<small>黄金信息调查员</small></span></a><span class="version">RESEARCH LAB <b>01</b></span><span id="connection" class="connection">检查配置中</span></header>
-<main>
-<section class="hero"><div class="eyebrow">FOLLOW THE EVIDENCE</div><h1>让每一条关于黄金的说法，<br><span>都有证据可循。</span></h1><p>从一条新闻出发，追溯来源、检查口径、重新计算。<br>看清已经确认的事实，也保留还没有答案的问题。</p></section>
-<div class="workspace">
-<aside>
-<form id="investigation" class="panel compose">
-<div class="section-label"><span>01 / 开始调查</span><span class="gold-dot"></span></div>
-<div class="tabs" role="group" aria-label="调查模式"><button type="button" id="demo-mode" class="selected">教学演示</button><button type="button" id="live-mode">单调查员</button><button type="button" id="multi-mode">Multi-Agent</button></div>
-<p id="mode-note" class="hint">免 Key · 虚构资料 · 固定流程，先看一遍完整效果。</p>
-<label for="task">新闻链接或待核验说法</label><textarea id="task" rows="5" placeholder="粘贴一条黄金新闻链接，或输入你想核实的说法…"></textarea>
-<button class="text-button" type="button" id="sample">填入同花顺真实新闻案例 ↗</button>
-<label for="strategy">调查策略</label><select id="strategy"><option value="source_first">来源优先 · 先找原始发布机构</option><option value="scope_first">口径优先 · 先拆日期、单位和合约</option><option value="counter_first">反证优先 · 检查另一种解释</option></select>
-<button id="start" class="primary" type="submit">运行教学演示 <span>→</span></button>
-<p class="fine" id="budget">演示不调用模型、不消耗 API 额度。</p>
-<div id="form-error" class="error hidden" role="alert"></div>
-</form>
-<details class="panel setup"><summary>连接 Codex / OpenAI API <span>＋</span></summary>
-<p class="fine">Codex 模式：在项目终端运行 <code>uv run python main.py --login-codex</code>，完成浏览器登录后，用 <code>uv run python main.py --provider codex</code> 启动。</p>
-<p class="fine">API 模式：在本地 <code>.env</code> 配置 <code>OPENAI_API_KEY</code>，用 <code>--provider openai</code> 启动。</p>
-<p class="fine">登录信息不显示在页面。联网调查会将输入和检索资料发送到所选模型服务；账户权限、额度与搜索可用性需实际调用确认。</p></details>
-<section class="panel history"><div class="section-label">最近的调查</div><div id="history"><p class="hint">完成第一条调查后，这里会留下记录。</p></div></section>
-</aside>
-<section class="results" aria-live="polite">
-<div id="welcome" class="panel welcome"><span class="outline-mark">Au</span><h2>先跑通一次调查</h2><p>左侧点击“运行教学演示”，看看系统怎样<br>从三个说法中找出一个计算错误。</p><div class="mini-flow"><span>拆解说法</span><i>→</i><span>收集证据</span><i>→</i><span>核验结论</span></div><div class="welcome-note">教学案例全部虚构 · 真实新闻需要联网调查</div></div>
-<div id="run-view" class="hidden">
-<div class="result-head"><div><div class="eyebrow" id="run-mode">INVESTIGATION</div><h2 id="result-title">调查进行中</h2></div><span class="state" id="run-state">进行中</span></div>
-<div id="notice" class="notice"></div><div id="run-error" class="error hidden"></div>
-<div class="metrics"><div><span id="metric-claims">—</span><small>核验说法</small></div><div><span id="metric-evidence">0</span><small>证据记录</small></div><div><span id="metric-tools">0</span><small>工具调用</small></div><div><span id="metric-time">—</span><small>耗时 / 秒</small></div></div>
-<section class="panel trace"><div class="section-label">02 / 调查过程 <span id="trace-label">保留行动与工具记录</span></div><ol id="events"></ol></section>
-<section id="report-section" class="hidden"><div class="report-toolbar"><h3>03 / 核验结论</h3><a id="download" class="text-button" download="gold-report.md">下载报告 ↓</a></div><p id="summary" class="summary"></p><div id="candidates-section" class="hidden"><h3>三个研究员的候选结果</h3><div id="candidates" class="candidates"></div></div><div id="claims"></div><div class="panel unresolved"><h3>仍需确认</h3><ul id="unresolved"></ul><p id="review" class="fine"></p><p id="validation" class="fine"></p></div></section>
-<section class="sources"><h3>04 / 证据资料</h3><div id="evidence"></div></section>
-<p id="usage" class="fine"></p>
+<div class="app-shell">
+  <aside id="sidebar" class="sidebar">
+    <div class="brand"><span class="mark">Au</span><span>Gold Analyst<small>MULTI-AGENT RESEARCH</small></span></div>
+    <button id="new-chat" class="new-chat" type="button">＋ 新建调查</button>
+    <details class="history-group" open>
+      <summary>历史对话 <span>⌄</span></summary>
+      <div id="history" class="history"><p class="muted">还没有调查记录</p></div>
+    </details>
+    <div class="sidebar-foot">
+      <span id="connection" class="connection">检查模型配置中</span>
+      <details class="setup"><summary>连接设置</summary><p>Codex：<code>uv run python main.py --provider codex</code></p><p>OpenAI：在 <code>.env</code> 配置 Key 后启动。</p></details>
+    </div>
+  </aside>
+
+  <main class="chat-main">
+    <header class="chat-head">
+      <button id="sidebar-toggle" class="icon-button" type="button" aria-label="打开历史">☰</button>
+      <div><h1 id="chat-title">新调查</h1><p>规划、市场、原因、核验与裁判 Agent 协作</p></div>
+      <span class="mode-badge">MULTI-AGENT</span>
+    </header>
+
+    <section id="chat-scroll" class="chat-scroll">
+      <div id="empty" class="empty-state">
+        <span class="outline-mark">Au</span>
+        <h2>今天想调查什么？</h2>
+        <p>输入一个黄金市场问题、新闻链接或待核验说法。<br>调查完成后，可以直接在同一对话里继续追问。</p>
+        <button class="suggestion" type="button">最近黄金价格上涨了多少，主要原因是什么？</button>
+      </div>
+      <div id="messages" class="messages hidden"></div>
+      <section id="activity" class="activity hidden">
+        <div class="activity-head"><span class="pulse"></span><b id="activity-title">Multi-Agent 正在调查…</b><small id="activity-meta"></small></div>
+        <ol id="events"></ol>
+      </section>
+      <div id="chat-error" class="error hidden" role="alert"></div>
+    </section>
+
+    <form id="composer" class="composer">
+      <textarea id="prompt" rows="2" maxlength="4000" placeholder="询问有关黄金市场的问题…"></textarea>
+      <div class="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button id="send" type="submit">发送 <b>↑</b></button></div>
+    </form>
+  </main>
 </div>
-</section>
-</div>
-<footer>Gold Analyst · 一个可读、可复核的研究原型 <span>事实核验 · 不提供行情预测</span></footer>
-</main>
-</body></html>
+
+<dialog id="report-dialog" class="report-dialog">
+  <div class="dialog-head"><div><small>完整调查报告</small><h2 id="report-title"></h2></div><button id="close-report" class="icon-button" type="button">✕</button></div>
+  <div id="report-body"></div>
+</dialog>
+</body>
+</html>

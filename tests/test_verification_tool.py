@@ -101,7 +101,7 @@ class SubmitVerificationToolTests(unittest.TestCase):
         context = self.context()
         context.run["evidence"] = [context.run["evidence"][0]]
         result = SubmitVerificationTool(context).execute(**missing_new_source)
-        self.assertEqual(result["fact_results"][0]["verdict"], "partial")
+        self.assertEqual(result["fact_results"][0]["verdict"], "uncorroborated")
         self.assertIn("URL 不同的新文章", result["fact_results"][0]["reason"])
 
     def test_same_domain_different_article_can_corroborate_cause(self):
@@ -118,7 +118,7 @@ class SubmitVerificationToolTests(unittest.TestCase):
         context = self.context()
         context.run["evidence"][1]["url"] = "https://www.reuters.com/a?utm_source=test"
         result = SubmitVerificationTool(context).execute(**duplicate_article)
-        self.assertEqual(result["fact_results"][0]["verdict"], "partial")
+        self.assertEqual(result["fact_results"][0]["verdict"], "uncorroborated")
         self.assertIn("URL 不同的新文章", result["fact_results"][0]["reason"])
 
     def test_market_supported_reuses_official_evidence(self):

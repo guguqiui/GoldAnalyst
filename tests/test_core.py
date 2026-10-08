@@ -153,6 +153,26 @@ class ParsingTests(unittest.TestCase):
 
 
 class AgentTests(unittest.TestCase):
+    def test_single_agent_receives_session_history_before_current_question(self):
+        client = FakeClient([
+            response(call("submit_report", report([]), 1)),
+            response(call("submit_report", report([]), 2)),
+        ])
+        run = new_run("live", "第二个原因有什么证据？", "source_first")
+        history = [
+            {"role": "user", "content": "九月金价为什么下跌？"},
+            {"role": "assistant", "content": "主要有三个原因。"},
+        ]
+        run["conversation_history"] = history
+
+        investigate(run, lambda *a: None, client)
+
+        self.assertEqual(client.requests[0]["input"][:2], history)
+        self.assertEqual(
+            client.requests[0]["input"][2],
+            {"role": "user", "content": "第二个原因有什么证据？"},
+        )
+
     @patch("gold_analyst.tools.web.fetch")
     def test_excluded_source_is_skipped_without_using_tool_budget(self, fake_fetch):
         run = new_run("live", "核验原因", "source_first")

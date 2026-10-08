@@ -2,7 +2,9 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 
-VERDICTS = {"有证据支持", "部分成立", "有证据反驳", "证据不足"}
+VERDICTS = {
+    "有证据支持", "部分成立", "未通过交叉验证", "有证据反驳", "证据不足",
+}
 
 
 def calculate_change(current, previous):

@@ -62,7 +62,11 @@ def investigate(
     run["model"] = cfg["model"]
     run["strategy_version"] = strategy["version"]
     tools = create_tool_registry(run, emit, llm.client, cfg["model"], allowed_tools)
-    messages: list[object] = [{"role": "user", "content": run["input"]}]
+    messages: list[object] = [
+        dict(item) for item in run.get("conversation_history", [])
+        if item.get("role") in {"user", "assistant"} and item.get("content")
+    ]
+    messages.append({"role": "user", "content": run["input"]})
     draft: dict[str, object] | None = None
     started = time.monotonic()
     output_tool = tools.get(output_tool_name)

@@ -44,6 +44,7 @@ class RunState(TypedDict, total=False):
     notice: str
     error: str
     save_error: str
+    session_save_error: str
     duration_seconds: float
     candidates: list[dict[str, object]]
     adjudication: list[dict[str, object]]
@@ -57,3 +58,7 @@ class RunState(TypedDict, total=False):
     original_question: str
     context_manifest: dict[str, object]
     excluded_source_urls: list[str]
+    session_id: str
+    parent_run_id: str
+    attempt_id: str
+    conversation_history: list[dict[str, str]]

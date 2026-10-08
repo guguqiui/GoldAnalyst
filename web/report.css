@@ -1,0 +1,62 @@
+.source-body {
+  padding: 10px 0 4px;
+}
+
+.source-excerpt {
+  margin: 0;
+  padding: 12px;
+  background: #f4f3ed;
+  font-size: 11px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.source-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.source-links a {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
+  border: 1px solid #e3dac4;
+  border-radius: 4px;
+  background: #f4f0e4;
+  color: var(--gold);
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.source-links a strong {
+  max-width: 420px;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-links a small {
+  color: var(--gold);
+  font-size: 9px;
+}
+
+.source-links a:hover {
+  text-decoration: underline;
+}
+
+.source-more {
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.source-more > summary {
+  width: fit-content;
+  color: var(--gold);
+}

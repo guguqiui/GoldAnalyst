@@ -17,7 +17,10 @@ def investigate_multi_workflow(
 ) -> RunState:
     """按 Planner → Specialists → Verification → Judge 执行一次调查。"""
     emit("规划 Agent", "分解用户问题并生成任务依赖图")
-    planning = generate_task_plan(run["input"], client)
+    planning = generate_task_plan(
+        run["input"], client,
+        conversation_history=run.get("conversation_history"),
+    )
     plan = planning.plan
     run["plan"] = plan
     run["usage"]["input_tokens"] += planning.response.input_tokens

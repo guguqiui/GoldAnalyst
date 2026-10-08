@@ -117,6 +117,7 @@ class ContextBuilder:
         }
         payload: dict[str, object] = {
             "question": parent["input"],
+            "conversation_history": copy.deepcopy(parent.get("conversation_history", [])),
             "task": task,
             "market": plan.get("market", ""),
             "time_intent": plan.get("time_intent", {}),

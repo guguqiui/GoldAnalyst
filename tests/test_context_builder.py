@@ -53,6 +53,20 @@ class ContextBuilderTests(unittest.TestCase):
         run["original_question"] = "请核验 https://example.com/source"
         self.assertTrue(context.is_target_url("https://example.com/source"))
 
+    def test_specialist_context_includes_session_history(self):
+        parent = new_run("multi", "第二个原因有什么证据？", "source_first")
+        history = [
+            {"role": "user", "content": "九月金价为什么下跌？"},
+            {"role": "assistant", "content": "主要有三个原因。"},
+        ]
+        parent["conversation_history"] = history
+        parent["plan"] = {}
+        task = {"id": "cause", "agent": "cause", "goal": "继续调查", "depends_on": []}
+
+        context = ContextBuilder().build_specialist_context(parent, task, [], [])
+
+        self.assertEqual(context.payload["conversation_history"], history)
+
 
 if __name__ == "__main__":
     unittest.main()

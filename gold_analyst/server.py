@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
+import shutil
 import threading
 import time
 from urllib.parse import urlparse
@@ -16,10 +17,12 @@ from .prompts import STRATEGIES
 from .persistence.local import LOCAL_ROOT
 from .persistence.reports import now, save_run, markdown
 from .server_state import blank_run
+from .session import SessionService
 
 RUNS = {}
 LOCK = threading.Lock()
 POOL = ThreadPoolExecutor(max_workers=1)
+SESSION_SERVICE = SessionService()
 
 
 def new_run(mode: str, task: str, strategy: str) -> RunState:
@@ -28,6 +31,11 @@ def new_run(mode: str, task: str, strategy: str) -> RunState:
 
 def execute(run):
     started = time.monotonic()
+
+    try:
+        SESSION_SERVICE.mark_running(run)
+    except (OSError, ValueError):
+        run["session_save_error"] = "无法更新本次对话状态；调查仍会继续。"
 
     def emit(stage, message, details=None):
         with LOCK:
@@ -79,6 +87,10 @@ def execute(run):
                     save_run(run)
         except OSError:
             run["save_error"] = "无法写入 .local 运行目录，请检查磁盘权限。页面仍保留本次结果。"
+        try:
+            SESSION_SERVICE.finish_run(run)
+        except (OSError, ValueError):
+            run["session_save_error"] = "调查已完成，但对话记录未能完整保存。"
     return run
 
 
@@ -89,6 +101,50 @@ def load_run(run_id):
         return RUNS[run_id]
     path = LOCAL_ROOT / "runs" / run_id / "run.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def create_followup_run(session_id: str, task: str) -> RunState:
+    """创建并调度一次追问；HTTP 层和测试共用同一入口。"""
+    if not isinstance(task, str) or not task.strip() or len(task) > 4000:
+        raise ValueError("请输入不超过 4000 字的追问")
+    session = SESSION_SERVICE.store.get_session(session_id)
+    if session is None:
+        raise LookupError("对话不存在")
+    if session.mode in {"live", "multi"} and not public_settings()["model_ready"]:
+        raise ValueError("模型尚未配置，无法继续追问")
+    with LOCK:
+        if any(r["status"] == "running" for r in RUNS.values()):
+            raise RuntimeError("已有调查进行中，请等待完成。")
+        run = SESSION_SERVICE.create_followup_run(session.session_id, task.strip())
+        RUNS[run["id"]] = run
+    POOL.submit(execute, run)
+    return run
+
+
+def delete_session_history(session_id: str) -> int:
+    """删除一个 Session 及其关联 Run，返回删除的 Run 数量。"""
+    snapshot = SESSION_SERVICE.get_session_snapshot(session_id)
+    if snapshot is None:
+        raise LookupError("对话不存在")
+    run_ids = {
+        message.get("run_id")
+        for message in snapshot["messages"]
+        if isinstance(message, dict) and message.get("run_id")
+    }
+    with LOCK:
+        if any(
+            run.get("session_id") == session_id and run.get("status") == "running"
+            for run in RUNS.values()
+        ):
+            raise RuntimeError("调查仍在运行，暂时不能删除这段对话。")
+        SESSION_SERVICE.store.delete_session(session_id)
+        for run_id in run_ids:
+            if isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{16}", run_id):
+                RUNS.pop(run_id, None)
+                run_dir = LOCAL_ROOT / "runs" / run_id
+                if run_dir.exists():
+                    shutil.rmtree(run_dir)
+    return len(run_ids)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -125,22 +181,35 @@ class Handler(BaseHTTPRequestHandler):
         if not self.local_request():
             return
         path = urlparse(self.path).path
-        if path in {"/", "/app.js", "/style.css"}:
+        if path in {"/", "/app.js", "/style.css", "/report.css"}:
             name = "index.html" if path == "/" else path[1:]
-            mime = {"index.html": "text/html", "app.js": "text/javascript", "style.css": "text/css"}[name]
+            mime = {
+                "index.html": "text/html", "app.js": "text/javascript",
+                "style.css": "text/css", "report.css": "text/css",
+            }[name]
             return self.send(200, (ROOT / "web" / name).read_bytes(), mime + "; charset=utf-8")
         if path == "/api/config":
             return self.send(200, {**public_settings(), "strategies": STRATEGIES})
+        if path == "/api/sessions":
+            return self.send(200, SESSION_SERVICE.list_sessions())
         if path == "/api/runs":
             summaries = []
             files = (LOCAL_ROOT / "runs").glob("*/run.json")
             for file in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:12]:
                 try:
                     run = json.loads(file.read_text(encoding="utf-8"))
-                    summaries.append({k: run.get(k) for k in ("id", "mode", "created_at", "status", "input")})
+                    summaries.append({k: run.get(k) for k in (
+                        "id", "session_id", "mode", "created_at", "status", "input",
+                    )})
                 except (OSError, ValueError):
                     continue
             return self.send(200, summaries)
+        session_match = re.fullmatch(r"/api/sessions/([0-9a-f]{16})", path)
+        if session_match:
+            snapshot = SESSION_SERVICE.get_session_snapshot(session_match[1])
+            if snapshot:
+                return self.send(200, snapshot)
+            return self.send(404, {"error": "对话不存在"})
         match = re.fullmatch(r"/api/runs/([0-9a-f]{16})(/markdown)?", path)
         if match:
             run = load_run(match[1])
@@ -151,10 +220,29 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(200, run)
         self.send(404, {"error": "内容不存在"})
 
+    def do_DELETE(self):
+        if not self.local_request():
+            return
+        path = urlparse(self.path).path
+        session_match = re.fullmatch(r"/api/sessions/([0-9a-f]{16})", path)
+        if not session_match:
+            return self.send(404, {"error": "接口不存在"})
+        try:
+            deleted_runs = delete_session_history(session_match[1])
+            self.send(200, {"ok": True, "deleted_runs": deleted_runs})
+        except LookupError:
+            self.send(404, {"error": "对话不存在"})
+        except RuntimeError as exc:
+            self.send(409, {"error": str(exc)})
+        except OSError:
+            self.send(500, {"error": "删除失败，请检查本地文件权限"})
+
     def do_POST(self):
         if not self.local_request():
             return
-        if self.path != "/api/runs":
+        path = urlparse(self.path).path
+        followup_match = re.fullmatch(r"/api/sessions/([0-9a-f]{16})/messages", path)
+        if path != "/api/runs" and not followup_match:
             return self.send(404, {"error": "接口不存在"})
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -163,6 +251,20 @@ class Handler(BaseHTTPRequestHandler):
             if not self.headers.get("Content-Type", "").startswith("application/json"):
                 raise ValueError("需要 JSON 请求")
             data = json.loads(self.rfile.read(length))
+            if followup_match:
+                task = data.get("input", "")
+                try:
+                    run = create_followup_run(followup_match[1], task)
+                except LookupError:
+                    return self.send(404, {"error": "对话不存在"})
+                except RuntimeError as exc:
+                    return self.send(409, {"error": str(exc)})
+                return self.send(202, {
+                    "id": run["id"],
+                    "session_id": run["session_id"],
+                    "parent_run_id": run.get("parent_run_id"),
+                })
+
             mode, task, strategy = data.get("mode"), data.get("input", ""), data.get("strategy", "source_first")
             if mode not in {"demo", "live", "multi"} or strategy not in STRATEGIES:
                 raise ValueError("请选择有效模式与策略")
@@ -173,10 +275,10 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 if any(r["status"] == "running" for r in RUNS.values()):
                     return self.send(409, {"error": "已有调查进行中，请等待完成。"})
-                run = new_run(mode, task.strip(), strategy)
+                run = SESSION_SERVICE.create_initial_run(mode, task.strip(), strategy)
                 RUNS[run["id"]] = run
             POOL.submit(execute, run)
-            self.send(202, {"id": run["id"]})
+            self.send(202, {"id": run["id"], "session_id": run["session_id"]})
         except (ValueError, TypeError, AttributeError) as exc:
             self.send(400, {"error": str(exc)})
 
